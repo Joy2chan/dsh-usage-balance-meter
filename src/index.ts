@@ -367,6 +367,10 @@ function priceFor(provider: string, model: string | undefined, resolved: Resolve
       return providerTable.models?.[model]
     }
     if (providerTable.default !== undefined) return providerTable.default
+    // Provider summary rows have no single model: fall back to the first
+    // configured model's tier so the row still shows a real cost.
+    const firstModel = Object.values(providerTable.models ?? {})[0]
+    if (firstModel !== undefined) return firstModel
   }
   return resolved.prices.default ?? resolved.price
 }
