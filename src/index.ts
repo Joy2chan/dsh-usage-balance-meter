@@ -1041,9 +1041,9 @@ async function renderCostCommand(
   } else {
     lines.push('  budget: disabled')
   }
-  if (resolved.price === undefined) {
+  if (resolved.price === undefined && resolved.prices.default === undefined) {
     lines.push('')
-    lines.push('Tip: set inputPricePerMillion/outputPricePerMillion to enable cost estimates.')
+    lines.push('Tip: set inputPricePerMillion/outputPricePerMillion (or configure prices) to enable cost estimates.')
   }
   return { kind: 'success', text: lines.join('\n') }
 }
