@@ -118,20 +118,33 @@ export class Ledger {
     this.file = file
   }
 
-  /** Open the ledger at `$DSH_HOME/storages/usage-meter/ledger.json`. */
-  static open(historyDays = DEFAULT_HISTORY_DAYS): Ledger {
-    const path = join(resolveDshHome(), 'storages', 'usage-meter', 'ledger.json')
+  /**
+   * Open the ledger. Prefer a caller-supplied `baseDir` (an allowed durable
+   * location under the current file policy, e.g. the workspace root); without
+   * one, fall back to `$DSH_HOME/storages/usage-meter/ledger.json`.
+   * Passing `null` returns a non-persisting in-memory ledger.
+   */
+  static open(historyDays = DEFAULT_HISTORY_DAYS, baseDir?: string | null): Ledger {
+    const path = baseDir === null
+      ? ''
+      : baseDir === undefined
+        ? join(resolveDshHome(), 'storages', 'usage-meter', 'ledger.json')
+        : join(baseDir, 'ledger.json')
     let file: LedgerFile
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<LedgerFile>
-      file = {
-        version: LEDGER_VERSION,
-        historyDays: typeof parsed.historyDays === 'number' ? parsed.historyDays : historyDays,
-        daily: typeof parsed.daily === 'object' && parsed.daily !== null ? parsed.daily as LedgerFile['daily'] : {},
-        updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
-      }
-    } catch {
+    if (path.length === 0) {
       file = { version: LEDGER_VERSION, historyDays, daily: {}, updatedAt: Date.now() }
+    } else {
+      try {
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<LedgerFile>
+        file = {
+          version: LEDGER_VERSION,
+          historyDays: typeof parsed.historyDays === 'number' ? parsed.historyDays : historyDays,
+          daily: typeof parsed.daily === 'object' && parsed.daily !== null ? parsed.daily as LedgerFile['daily'] : {},
+          updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+        }
+      } catch {
+        file = { version: LEDGER_VERSION, historyDays, daily: {}, updatedAt: Date.now() }
+      }
     }
     const ledger = new Ledger(path, historyDays, file)
     ledger.prune()
@@ -202,6 +215,7 @@ export class Ledger {
   }
 
   private writeFile(): void {
+    if (this.path.length === 0) return // in-memory ledger
     mkdirSync(dirname(this.path), { recursive: true })
     const tmp = `${this.path}.tmp`
     writeFileSync(tmp, JSON.stringify(this.file, null, 2), 'utf8')

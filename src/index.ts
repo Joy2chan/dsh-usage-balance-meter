@@ -16,6 +16,7 @@
  * @module dsh-usage-meter
  */
 
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
@@ -803,7 +804,21 @@ export function apply(ctx: Context, config: Config): void {
   }
   resolved() // validate the initial config eagerly
 
-  const ledger = Ledger.open()
+  // Persist under the workspace root when a sandbox policy is present: that
+  // location is durable AND allowed under the default workspace-write file
+  // policy, unlike `$DSH_HOME/storages`. In-memory is only a last-resort so
+  // the plugin never blocks startup.
+  const policy = ctx.get('sandboxPolicy') as unknown as { resolve?: () => { workspaceRoot?: string } } | undefined
+  const workspaceRoot = policy?.resolve?.().workspaceRoot
+  let ledger: Ledger
+  try {
+    ledger = workspaceRoot !== undefined && workspaceRoot.length > 0
+      ? Ledger.open(180, join(workspaceRoot, '.dsh-usage-meter'))
+      : Ledger.open()
+  } catch (error) {
+    ledger = Ledger.open(180, null)
+    ;(ctx as { logger?: { warn?: (msg: string) => void } }).logger?.warn?.(`[usage-meter] ledger disk open failed; running with in-memory ledger: ${String(error)}`)
+  }
   ctx.effect(() => () => ledger.close())
 
   // Host-side Typert remote consumed by the web client footer.
