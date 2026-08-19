@@ -5,6 +5,8 @@ function fakeContext() {
   const tools: Array<{ name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }> = []
   const ctx = {
     get: () => undefined,
+    on: () => {},
+    effect: () => {},
     tools: {
       register: (definition: { name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }) => {
         tools.push(definition)

@@ -90,11 +90,11 @@ npm run build   # tsc -> lib/
 npm test        # vitest
 ```
 
-## 路线图（规划中，尚未实现）
+## 路线图
 
 - ~~按 provider 聚合用量~~（已在 `api_overview` 实现）
 - ~~按 provider 的余额适配器~~（已实现：官方内置 + 可配置 HTTP 适配器）
-- ~~`/cost` 斜杠命令~~（已实现：打印每个 provider 的用量/费用/余额）
-- 轻量设置持久化（价格、预算、阈值）
-- 持久化账本（今日 / 本月 / 累计）
-- 可选的最小化 Web UI footer
+- ~~`/cost` 斜杠命令~~（已实现）
+- ~~持久化账本（今日 / 本月 / 累计）~~（已实现：`usage_summary` + `/cost`）
+- ~~轻量设置持久化（价格、预算、阈值）~~（已实现）
+- ~~最小化 Web UI footer~~（已在 `client/` 放下脚手架，实验性——需在真实 Harness Web 构建中验证）

@@ -23,10 +23,14 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue, SessionEvent } from '@deepseek-ai/dsh-session'
+import { z as zod } from 'zod'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-commands'
+import { Ledger, localDayKey, type LedgerUsage, type TotalsView } from './ledger.js'
+import type {} from '@deepseek-ai/dsh-session-projection'
 
 export const name = 'usage-meter'
 export const inject = ['tools', 'llm']
@@ -35,6 +39,7 @@ const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_BALANCE_PATH = '/user/balance'
 const OFFICIAL_PROVIDER = 'deepseek-official'
+const SETTINGS_NS = settingsNamespace('usage-meter')
 
 /**
  * One configurable HTTP balance adapter for a provider route. Lets non-official
@@ -57,6 +62,28 @@ export interface BalanceAdapterConfig {
   extract?: string
   /** Currency label for the extracted value. */
   currency?: string
+}
+
+/** Budget configuration: a periodic cost limit with a warning band. */
+export interface BudgetConfig {
+  /** Whether the budget is enforced for display/command output. Defaults to false. */
+  enabled?: boolean
+  /** Budget amount in the configured currency. */
+  amount?: number
+  /** Budget period. Defaults to `month`. */
+  period?: 'day' | 'month' | 'all' | 'custom'
+  /** Inclusive start date for a `custom` period (`YYYY-MM-DD`). */
+  customStart?: string
+  /** Inclusive end date for a `custom` period (`YYYY-MM-DD`). */
+  customEnd?: string
+}
+
+/** Warning/error thresholds expressed as percentages of the budget. */
+export interface ThresholdsConfig {
+  /** Percentage at which the budget is considered under warning. Defaults to 80. */
+  warnPercent?: number
+  /** Percentage at which the budget is considered exceeded. Defaults to 100. */
+  errorPercent?: number
 }
 
 export interface Config {
@@ -84,6 +111,10 @@ export interface Config {
   currency?: string
   /** Optional per-provider HTTP balance adapters for non-official providers. */
   balanceProviders?: BalanceAdapterConfig[]
+  /** Optional periodic cost budget. */
+  budget?: BudgetConfig
+  /** Optional budget warning/error thresholds (percentages). */
+  thresholds?: ThresholdsConfig
 }
 
 const balanceAdapterSchema: z<BalanceAdapterConfig> = z.object({
@@ -107,6 +138,17 @@ export const Config: z<Config> = z.object({
   cacheWritePricePerMillion: z.number().min(0),
   currency: z.string().default('USD'),
   balanceProviders: z.array(balanceAdapterSchema).default([]),
+  budget: z.object({
+    enabled: z.boolean().default(false),
+    amount: z.number().min(0).default(0),
+    period: z.union(['day', 'month', 'all', 'custom']).default('month'),
+    customStart: z.string(),
+    customEnd: z.string(),
+  }),
+  thresholds: z.object({
+    warnPercent: z.number().min(0).max(100).default(80),
+    errorPercent: z.number().min(0).max(100).default(100),
+  }),
 })
 
 interface PriceConfig {
@@ -124,6 +166,21 @@ interface ResolvedConfig {
   readonly price?: PriceConfig
   readonly currency: string
   readonly balanceAdapters: ReadonlyMap<string, BalanceAdapterConfig>
+  readonly budget: ResolvedBudget
+  readonly thresholds: ResolvedThresholds
+}
+
+interface ResolvedBudget {
+  readonly enabled: boolean
+  readonly amount: number
+  readonly period: BudgetConfig['period']
+  readonly customStart?: string
+  readonly customEnd?: string
+}
+
+interface ResolvedThresholds {
+  readonly warnPercent: number
+  readonly errorPercent: number
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
@@ -154,6 +211,19 @@ function resolveConfig(config: Config): ResolvedConfig {
     }
     balanceAdapters.set(adapter.provider, adapter)
   }
+  const budgetConfig = config.budget ?? {}
+  const budget: ResolvedBudget = {
+    enabled: budgetConfig.enabled === true,
+    amount: budgetConfig.amount ?? 0,
+    period: budgetConfig.period ?? 'month',
+    ...budgetConfig.customStart !== undefined ? { customStart: budgetConfig.customStart } : {},
+    ...budgetConfig.customEnd !== undefined ? { customEnd: budgetConfig.customEnd } : {},
+  }
+  const thresholdsConfig = config.thresholds ?? {}
+  const thresholds: ResolvedThresholds = {
+    warnPercent: thresholdsConfig.warnPercent ?? 80,
+    errorPercent: thresholdsConfig.errorPercent ?? 100,
+  }
   return {
     apiKeyEnv,
     baseURL,
@@ -162,6 +232,8 @@ function resolveConfig(config: Config): ResolvedConfig {
     ...prices === undefined ? {} : { price: prices },
     currency: config.currency ?? 'USD',
     balanceAdapters,
+    budget,
+    thresholds,
   }
 }
 
@@ -273,6 +345,72 @@ function estimateCost(usage: SessionUsage, price: PriceConfig | undefined, curre
     total: input + output + cacheRead + cacheWrite,
     currency,
   }
+}
+
+/** Convert a session usage snapshot into a ledger-compatible bucket shape. */
+function toLedgerUsage(usage: SessionUsage): LedgerUsage {
+  return {
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    cacheRead: usage.cacheReadTokens,
+    cacheWrite: usage.cacheWriteTokens,
+    reasoning: usage.reasoningTokens,
+  }
+}
+
+/** Total cost (a number) for one usage snapshot under the current pricing. */
+function costOfUsage(usage: SessionUsage, price: PriceConfig | undefined): number {
+  if (price === undefined) return 0
+  const estimate = estimateCost(usage, price, 'USD')
+  return estimate?.total ?? 0
+}
+
+/** Budget status view when a budget is enabled, otherwise null. */
+interface BudgetStatusView {
+  enabled: true
+  period: string
+  used: number
+  amount: number
+  percent: number
+  warnPercent: number
+  errorPercent: number
+}
+
+/** Summary of the persistent ledger plus the budget status. */
+interface LedgerSummaryView {
+  today: TotalsView
+  month: TotalsView
+  all: TotalsView
+  budget: BudgetStatusView | null
+}
+
+function buildLedgerSummary(ledger: Ledger, resolved: ResolvedConfig): LedgerSummaryView {
+  const totals = ledger.totals()
+  let budget: BudgetStatusView | null = null
+  if (resolved.budget.enabled) {
+    let used: number
+    const period = resolved.budget.period
+    if (period === 'day') used = totals.today.cost
+    else if (period === 'month') used = totals.month.cost
+    else if (period === 'all') used = totals.all.cost
+    else {
+      const start = resolved.budget.customStart ?? localDayKey(Date.now())
+      const end = resolved.budget.customEnd ?? localDayKey(Date.now())
+      used = ledger.rangeTotals(start, end).cost
+    }
+    const amount = resolved.budget.amount
+    const percent = amount > 0 ? (used / amount) * 100 : 0
+    budget = {
+      enabled: true,
+      period: String(period),
+      used,
+      amount,
+      percent,
+      warnPercent: resolved.thresholds.warnPercent,
+      errorPercent: resolved.thresholds.errorPercent,
+    }
+  }
+  return { today: totals.today, month: totals.month, all: totals.all, budget }
 }
 
 /**
@@ -575,19 +713,34 @@ async function renderCostCommand(
   resolved: ResolvedConfig,
   invocation: CommandInvocation,
   signal: AbortSignal,
+  ledger: Ledger,
 ): Promise<CommandResult> {
   const providers = await buildProviderOverviews(ctx, resolved, signal, invocation.agent.session.events)
+  const lines: string[] = []
   if (providers.length === 0) {
-    return { kind: 'success', text: 'No active LLM providers found.' }
+    lines.push('No active LLM providers found.')
+  } else {
+    lines.push('Usage & balance by provider:')
+    for (const p of providers) {
+      const u = p.usage
+      lines.push(`• ${p.displayName} (${p.provider})`)
+      lines.push(`  calls: ${p.calls} | input: ${u.inputTokens} | output: ${u.outputTokens} | cacheRead: ${u.cacheReadTokens} | cacheWrite: ${u.cacheWriteTokens}`)
+      if (p.models.length > 0) lines.push(`  models: ${p.models.join(', ')}`)
+      lines.push(`  cost: ${p.cost === null ? 'not configured' : `${p.cost.currency} ${p.cost.total.toFixed(6)}`}`)
+      lines.push(`  ${renderBalanceLine(p)}`)
+    }
   }
-  const lines: string[] = ['Usage & balance by provider:']
-  for (const p of providers) {
-    const u = p.usage
-    lines.push(`• ${p.displayName} (${p.provider})`)
-    lines.push(`  calls: ${p.calls} | input: ${u.inputTokens} | output: ${u.outputTokens} | cacheRead: ${u.cacheReadTokens} | cacheWrite: ${u.cacheWriteTokens}`)
-    if (p.models.length > 0) lines.push(`  models: ${p.models.join(', ')}`)
-    lines.push(`  cost: ${p.cost === null ? 'not configured' : `${p.cost.currency} ${p.cost.total.toFixed(6)}`}`)
-    lines.push(`  ${renderBalanceLine(p)}`)
+  const summary = buildLedgerSummary(ledger, resolved)
+  lines.push('')
+  lines.push('Ledger totals:')
+  lines.push(`  today: calls ${summary.today.calls} | cost ${summary.today.cost.toFixed(6)} ${resolved.currency}`)
+  lines.push(`  month: calls ${summary.month.calls} | cost ${summary.month.cost.toFixed(6)} ${resolved.currency}`)
+  lines.push(`  all:   calls ${summary.all.calls} | cost ${summary.all.cost.toFixed(6)} ${resolved.currency}`)
+  if (summary.budget !== null) {
+    const b = summary.budget
+    lines.push(`  budget (${b.period}): ${b.used.toFixed(6)} / ${b.amount.toFixed(6)} = ${b.percent.toFixed(1)}% (warn >= ${b.warnPercent}%, error >= ${b.errorPercent}%)`)
+  } else {
+    lines.push('  budget: disabled')
   }
   if (resolved.price === undefined) {
     lines.push('')
@@ -597,8 +750,133 @@ async function renderCostCommand(
 }
 
 /** Register the plugin's two model-facing tools. */
+/** Per-session cost/token projection surfaced to the web client footer. */
+interface CostUsageProjection {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  reasoning: number
+  cost: number
+}
+
+declare module '@deepseek-ai/dsh-session-projection/types' {
+  interface SessionProjectionMap {
+    costUsage: CostUsageProjection
+  }
+}
+
+/** Register the plugin's tools, persistent ledger, and slash command. */
 export function apply(ctx: Context, config: Config): void {
-  const resolved = resolveConfig(config)
+  // Dynamic configuration: a mounted settings section can replace the source
+  // function, so every operation re-resolves with the latest persisted values.
+  let current: () => Config = () => config
+  let lastRaw: Config | undefined
+  let lastGood: ResolvedConfig | undefined
+  const resolved = (): ResolvedConfig => {
+    const raw = current()
+    if (raw === lastRaw && lastGood !== undefined) return lastGood
+    lastGood = resolveConfig(raw)
+    lastRaw = raw
+    return lastGood
+  }
+  resolved() // validate the initial config eagerly
+
+  const ledger = Ledger.open()
+  ctx.effect(() => () => ledger.close())
+
+  // Capture every model call's usage from the llm/stream waterfall and account
+  // it into the persistent ledger (today / month / all totals).
+  ctx.on('llm/stream', (options, next) => {
+    const downstream = next()
+    return (async function* usageMeterStream() {
+      let usage: TokenUsage | null = null
+      try {
+        for await (const chunk of downstream) {
+          if (chunk !== null && typeof chunk === 'object'
+            && (chunk as { type?: string }).type === 'usage'
+            && (chunk as { usage?: unknown }).usage !== undefined) {
+            usage = (chunk as { usage?: TokenUsage }).usage ?? null
+          }
+          yield chunk
+        }
+      } finally {
+        if (usage !== null) {
+          try {
+            const sessionUsage = {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cacheReadTokens: usage.cacheReadTokens ?? 0,
+              cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+              reasoningTokens: usage.reasoningTokens ?? 0,
+            }
+            ledger.account({
+              provider: options.provider,
+              model: options.model,
+              ...options.sessionId !== undefined ? { sessionId: String(options.sessionId) } : {},
+              timestamp: Date.now(),
+              usage: toLedgerUsage(sessionUsage),
+              cost: costOfUsage(sessionUsage, resolved().price),
+            })
+          } catch (error) {
+            ;(ctx as { logger?: { warn?: (msg: string) => void } }).logger?.warn?.(`[usage-meter] ledger account failed: ${String(error)}`)
+          }
+        }
+      }
+    })()
+  })
+
+  // Persist user-adjustable settings (pricing, budget, thresholds) when the
+  // settings seam is composed.
+  ctx.inject(['settings'], (settingsCtx) => {
+    installSettingsSection(settingsCtx, SETTINGS_NS, Config, config, {
+      setSource: (source) => {
+        current = source
+      },
+      onChange: () => {
+        resolved()
+      },
+    })
+  })
+
+  // Surface per-session cost/tokens to the web client footer through the
+  // session-projection seam.
+  ctx.inject(['sessionProjections'], (projectionCtx) => {
+    projectionCtx.sessionProjections.register({
+      key: 'costUsage',
+      schema: zod.object({
+        input: zod.number(),
+        output: zod.number(),
+        cacheRead: zod.number(),
+        cacheWrite: zod.number(),
+        reasoning: zod.number(),
+        cost: zod.number(),
+      }),
+      stateVersion: 1,
+      init: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 }),
+      apply: (state, event) => {
+        if (event.type !== 'assistant/message' || event.data.usage === undefined) return state
+        const u = event.data.usage
+        const sessionUsage = {
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          cacheReadTokens: u.cacheReadTokens ?? 0,
+          cacheWriteTokens: u.cacheWriteTokens ?? 0,
+          reasoningTokens: u.reasoningTokens ?? 0,
+        }
+        const cost = costOfUsage(sessionUsage, resolved().price)
+        return {
+          input: state.input + sessionUsage.inputTokens,
+          output: state.output + sessionUsage.outputTokens,
+          cacheRead: state.cacheRead + sessionUsage.cacheReadTokens,
+          cacheWrite: state.cacheWrite + sessionUsage.cacheWriteTokens,
+          reasoning: state.reasoning + sessionUsage.reasoningTokens,
+          cost: state.cost + cost,
+        }
+      },
+      view: state => state,
+    })
+  })
 
   ctx.tools.register(defineTool({
     name: 'deepseek_api_status',
@@ -680,25 +958,26 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(_args, exec) {
-      const apiKey = await resolveApiKey(ctx, resolved.apiKeyEnv)
+      const cfg = resolved()
+      const apiKey = await resolveApiKey(ctx, cfg.apiKeyEnv)
       if (apiKey === undefined) {
         throw new Error(
-          `No DeepSeek API key found for "${resolved.apiKeyEnv}". Store it through the credentials service or export it in the environment.`,
+          `No DeepSeek API key found for "${cfg.apiKeyEnv}". Store it through the credentials service or export it in the environment.`,
         )
       }
       const usage = collectSessionUsage(exec.agent?.session.events ?? [])
-      const cost = estimateCost(usage, resolved.price, resolved.currency)
+      const cost = estimateCost(usage, cfg.price, cfg.currency)
       let accountUsage: Record<string, JsonValue> | null = null
-      if (resolved.usagePath !== undefined) {
-        accountUsage = await getJson(`${resolved.baseURL}${resolved.usagePath}`, apiKey, exec.signal) as Record<string, JsonValue>
+      if (cfg.usagePath !== undefined) {
+        accountUsage = await getJson(`${cfg.baseURL}${cfg.usagePath}`, apiKey, exec.signal) as Record<string, JsonValue>
       }
-      const balance = await fetchOfficialBalance(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
+      const balance = await fetchOfficialBalance(cfg.baseURL, cfg.balancePath, apiKey, exec.signal)
       return {
         balance,
         usage,
         accountUsage,
         cost,
-        baseURL: resolved.baseURL,
+        baseURL: cfg.baseURL,
       }
     },
     presentCall: () => ({ card: 'generic', title: 'Check DeepSeek API status', kind: 'read' }),
@@ -719,17 +998,121 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(_args, exec) {
-      const providers = await buildProviderOverviews(ctx, resolved, exec.signal, exec.agent?.session.events ?? [])
+      const cfg = resolved()
+      const providers = await buildProviderOverviews(ctx, cfg, exec.signal, exec.agent?.session.events ?? [])
       return { providers }
     },
     presentCall: () => ({ card: 'generic', title: 'List provider usage & balance', kind: 'read' }),
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'usage_summary',
+    description:
+      'Read the persistent cost ledger totals (today / this month / all time) and the '
+      + 'budget status, across all sessions. Use this when the user asks how much has been '
+      + 'spent in total, today, this month, or against a budget.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          currency: { type: 'string', required: true },
+          totals: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              today: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  calls: { type: 'number', required: true },
+                  input: { type: 'number', required: true },
+                  output: { type: 'number', required: true },
+                  cacheRead: { type: 'number', required: true },
+                  cacheWrite: { type: 'number', required: true },
+                  reasoning: { type: 'number', required: true },
+                  cost: { type: 'number', required: true },
+                },
+              },
+              month: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  calls: { type: 'number', required: true },
+                  input: { type: 'number', required: true },
+                  output: { type: 'number', required: true },
+                  cacheRead: { type: 'number', required: true },
+                  cacheWrite: { type: 'number', required: true },
+                  reasoning: { type: 'number', required: true },
+                  cost: { type: 'number', required: true },
+                },
+              },
+              all: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  calls: { type: 'number', required: true },
+                  input: { type: 'number', required: true },
+                  output: { type: 'number', required: true },
+                  cacheRead: { type: 'number', required: true },
+                  cacheWrite: { type: 'number', required: true },
+                  reasoning: { type: 'number', required: true },
+                  cost: { type: 'number', required: true },
+                },
+              },
+            },
+          },
+          budget: {
+            oneOf: [
+              {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  enabled: { type: 'boolean', required: true },
+                  period: { type: 'string', required: true },
+                  used: { type: 'number', required: true },
+                  amount: { type: 'number', required: true },
+                  percent: { type: 'number', required: true },
+                  warnPercent: { type: 'number', required: true },
+                  errorPercent: { type: 'number', required: true },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+          providers: {
+            type: 'array',
+            required: true,
+            items: { type: 'object', additionalProperties: true },
+          },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: JSON.stringify(value),
+      }],
+    },
+    async execute(_args, exec) {
+      const cfg = resolved()
+      const summary = buildLedgerSummary(ledger, cfg)
+      const providers = await buildProviderOverviews(ctx, cfg, exec.signal, exec.agent?.session.events ?? [])
+      return {
+        currency: cfg.currency,
+        totals: { today: summary.today, month: summary.month, all: summary.all },
+        budget: summary.budget,
+        providers: providers.map(p => ({ provider: p.provider, displayName: p.displayName, calls: p.calls, cost: p.cost?.total ?? 0 })),
+      }
+    },
+    presentCall: () => ({ card: 'generic', title: 'Read cost ledger summary & budget', kind: 'read' }),
+  }))
+
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.commands.register({
       name: 'cost',
-      description: 'show current session usage, cost, and balance by provider',
-      handler: invocation => renderCostCommand(ctx, resolved, invocation, invocation.signal),
+      description: 'show current session usage, cost, balance, and ledger totals by provider',
+      handler: invocation => renderCostCommand(ctx, resolved(), invocation, invocation.signal, ledger),
     })
   })
 }
+

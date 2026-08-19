@@ -11,6 +11,8 @@ function fakeContext(providers: Array<{ id: string; name: string }>) {
   const commands: Array<{ name: string; handler: (invocation: unknown) => unknown }> = []
   const ctx = {
     get: () => undefined,
+    on: () => {},
+    effect: () => {},
     tools: {
       register: (definition: ToolLike) => {
         tools.push(definition)
@@ -21,6 +23,7 @@ function fakeContext(providers: Array<{ id: string; name: string }>) {
       listProviders: () => providers,
     },
     inject: (_services: string[], callback: (childCtx: { commands: { register: (def: { name: string; handler: (invocation: unknown) => unknown }) => void } }) => void) => {
+      if (!_services.includes('commands')) return
       callback({
         commands: {
           register: (def) => {

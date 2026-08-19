@@ -92,11 +92,11 @@ npm run build   # tsc -> lib/
 npm test        # vitest
 ```
 
-## Roadmap (planned, not yet implemented)
+## Roadmap
 
 - ~~Per-provider usage aggregation~~ (done in `api_overview`)
 - ~~Per-provider balance adapters~~ (done: official built-in + configurable HTTP adapters)
-- ~~`/cost` slash command~~ (done: prints per-provider usage/cost/balance)
-- Lightweight settings persistence (pricing, budget, thresholds)
-- Persistent ledger for today / month / cumulative totals
-- Optional minimal Web UI footer
+- ~~`/cost` slash command~~ (done)
+- ~~Persistent ledger (today / month / cumulative)~~ (done: `usage_summary` + `/cost`)
+- ~~Lightweight settings persistence (pricing, budget, thresholds)~~ (done)
+- ~~Minimal Web UI footer~~ (scaffold shipped under `client/`, experimental — verify against a live Harness web build)
