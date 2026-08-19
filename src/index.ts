@@ -413,6 +413,27 @@ function buildLedgerSummary(ledger: Ledger, resolved: ResolvedConfig): LedgerSum
   return { today: totals.today, month: totals.month, all: totals.all, budget }
 }
 
+/** Wire state the web client footer reads through `remote.usageMeter.getState()`. */
+interface CostStateView {
+  currency: string
+  today: TotalsView
+  month: TotalsView
+  all: TotalsView
+  budget: BudgetStatusView | null
+}
+
+function buildCostState(ctx: Context, ledger: Ledger, resolved: ResolvedConfig): CostStateView {
+  const summary = buildLedgerSummary(ledger, resolved)
+  return {
+    currency: resolved.currency,
+    today: summary.today,
+    month: summary.month,
+    all: summary.all,
+    budget: summary.budget,
+  }
+}
+
+
 /**
  * Perform one GET. Adds `Authorization: Bearer` unless `bearer` is false.
  * @returns parsed JSON body.
@@ -784,6 +805,13 @@ export function apply(ctx: Context, config: Config): void {
 
   const ledger = Ledger.open()
   ctx.effect(() => () => ledger.close())
+
+  // Host-side Typert remote consumed by the web client footer.
+  ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', {
+    async getState(): Promise<CostStateView> {
+      return buildCostState(ctx, ledger, resolved())
+    },
+  })
 
   // Capture every model call's usage from the llm/stream waterfall and account
   // it into the persistent ledger (today / month / all totals).

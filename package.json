@@ -14,12 +14,16 @@
     "./package.json": "./package.json",
     "./client": {
       "default": "./client/index.js"
+    },
+    "./typert": {
+      "default": "./lib/typert.js"
     }
   },
   "files": [
     "lib",
     "cordis.patch.yml",
-    "client"
+    "client",
+    "lib/typert.js"
   ],
   "dsh": {
     "bundle": {
@@ -43,7 +47,8 @@
     ],
     "capabilities": {
       "provides": [
-        "tool:deepseek_api_status"
+        "tool:deepseek_api_status",
+        "service:usageMeter"
       ]
     },
     "compatibility": {
