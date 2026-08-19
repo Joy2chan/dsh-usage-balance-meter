@@ -101,6 +101,18 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
 
 只有在组合中存在 `commands` 服务（交互式 UI）时注册；headless 组装里工具仍可用。
 
+## 内置默认价
+
+插件已内置 DeepSeek 价格表（谷时/峰时两档）：
+
+- `opencode-go` → USD 价（DeepSeek V4 Flash / V4 Pro）
+- `deepseek-official` → CNY 价（DeepSeek V4 Flash / V4 Pro）
+
+所以**不需要配 `prices` 也能算真实费用**。如果你设置了顶层的
+`inputPricePerMillion`/`outputPricePerMillion`，该全局价会替换内置表。
+只有你的 Harness 里**已配置/已挂载**的 provider（来自 `ctx.llm.listProviders()`）才会显示，
+没有配置的 provider 即使默认表里有价也不会出现。
+
 ## 计价说明
 
 - 账本成本**按币种分开存储**，不同币种不会被加在一起。

@@ -312,6 +312,53 @@ function normalizeFlat(fields: PriceFields): PriceConfig {
   }
 }
 
+/** Build a resolved price table from config, merging the baked defaults. */
+function buildResolvedPriceTable(config: Config): ResolvedPriceTable {
+  const userSetTopGlobal = config.inputPricePerMillion !== undefined
+    || config.outputPricePerMillion !== undefined
+    || config.cacheReadPricePerMillion !== undefined
+    || config.cacheWritePricePerMillion !== undefined
+  const userTopGlobal: PriceFields | undefined = userSetTopGlobal
+    ? {
+      ...config.inputPricePerMillion !== undefined ? { inputPricePerMillion: config.inputPricePerMillion } : {},
+      ...config.outputPricePerMillion !== undefined ? { outputPricePerMillion: config.outputPricePerMillion } : {},
+      ...config.cacheReadPricePerMillion !== undefined ? { cacheReadPricePerMillion: config.cacheReadPricePerMillion } : {},
+      ...config.cacheWritePricePerMillion !== undefined ? { cacheWritePricePerMillion: config.cacheWritePricePerMillion } : {},
+    }
+    : undefined
+
+  const rawDefault = config.prices?.default ?? userTopGlobal
+  // If the user set their own top-level global price, do not auto-apply the
+  // baked provider prices (they are a fallback, not an override).
+  const rawProviders = config.prices?.providers
+    ?? (userSetTopGlobal ? undefined : DEFAULT_PRICE_TABLE.providers)
+
+  const providers = rawProviders === undefined
+    ? undefined
+    : Object.fromEntries(
+      Object.entries(rawProviders).map(([provider, table]) => [
+        provider,
+        {
+          ...table.currency !== undefined ? { currency: table.currency } : {},
+          ...table.default !== undefined ? { default: normalizePriceFields(table.default) } : {},
+          ...table.models !== undefined
+            ? {
+              models: Object.fromEntries(
+                Object.entries(table.models)
+                  .map(([model, fields]) => [model, normalizePriceFields(fields)] as const)
+                  .filter((entry): entry is readonly [string, ResolvedPriceConfig] => entry[1] !== undefined),
+              ),
+            }
+            : {},
+        },
+      ]),
+    )
+  return {
+    ...rawDefault !== undefined ? { default: normalizePriceFields(rawDefault) } : {},
+    ...providers !== undefined ? { providers } : {},
+  }
+}
+
 /** Resolve the price to bill for one provider/model call. */
 function priceFor(provider: string, model: string | undefined, resolved: ResolvedConfig): ResolvedPriceConfig | undefined {
   const providerTable = resolved.prices.providers?.[provider]
@@ -334,6 +381,42 @@ const DEFAULT_PEAK_WINDOWS: ReadonlyArray<{ readonly start: number; readonly end
   { start: 1, end: 4 },
   { start: 6, end: 10 },
 ]
+
+/** Default price table (off-peak / peak) baked into the plugin. */
+const DEFAULT_PRICE_TABLE: PriceTable = {
+  default: {
+    offPeak: { inputPricePerMillion: 0.22, outputPricePerMillion: 0.66, cacheReadPricePerMillion: 0.007 },
+    peak: { inputPricePerMillion: 0.44, outputPricePerMillion: 1.32, cacheReadPricePerMillion: 0.014 },
+  },
+  providers: {
+    'opencode-go': {
+      currency: 'USD',
+      models: {
+        'deepseek-v4-flash': {
+          offPeak: { inputPricePerMillion: 0.22, outputPricePerMillion: 0.66, cacheReadPricePerMillion: 0.007 },
+          peak: { inputPricePerMillion: 0.44, outputPricePerMillion: 1.32, cacheReadPricePerMillion: 0.014 },
+        },
+        'deepseek-v4-pro': {
+          offPeak: { inputPricePerMillion: 0.66, outputPricePerMillion: 1.98, cacheReadPricePerMillion: 0.022 },
+          peak: { inputPricePerMillion: 1.32, outputPricePerMillion: 3.96, cacheReadPricePerMillion: 0.044 },
+        },
+      },
+    },
+    'deepseek-official': {
+      currency: 'CNY',
+      models: {
+        'deepseek-v4-flash': {
+          offPeak: { inputPricePerMillion: 1.5, outputPricePerMillion: 4.5, cacheReadPricePerMillion: 0.05 },
+          peak: { inputPricePerMillion: 3.0, outputPricePerMillion: 9.0, cacheReadPricePerMillion: 0.10 },
+        },
+        'deepseek-v4-pro': {
+          offPeak: { inputPricePerMillion: 4.5, outputPricePerMillion: 13.5, cacheReadPricePerMillion: 0.15 },
+          peak: { inputPricePerMillion: 9.0, outputPricePerMillion: 27.0, cacheReadPricePerMillion: 0.30 },
+        },
+      },
+    },
+  },
+}
 
 /** Whether a UTC timestamp falls in any peak window. */
 function isPeakHour(ms: number, windows: ReadonlyArray<{ readonly start: number; readonly end: number }>): boolean {
@@ -369,30 +452,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     }
     balanceAdapters.set(adapter.provider, adapter)
   }
-  const priceTable: ResolvedPriceTable = {
-    ...config.prices?.default !== undefined ? { default: normalizePriceFields(config.prices.default) } : {},
-    ...config.prices?.providers !== undefined
-      ? {
-        providers: Object.fromEntries(
-          Object.entries(config.prices.providers).map(([provider, table]) => [
-            provider,
-            {
-              ...table.default !== undefined ? { default: normalizePriceFields(table.default) } : {},
-              ...table.models !== undefined
-                ? {
-                  models: Object.fromEntries(
-                    Object.entries(table.models)
-                      .map(([model, fields]) => [model, normalizePriceFields(fields)] as const)
-                      .filter((entry): entry is readonly [string, PriceConfig] => entry[1] !== undefined),
-                  ),
-                }
-                : {},
-            },
-          ]),
-        ),
-      }
-      : {},
-  }
+  const priceTable = buildResolvedPriceTable(config)
   const budgetConfig = config.budget ?? {}
   const budget: ResolvedBudget = {
     enabled: budgetConfig.enabled === true,

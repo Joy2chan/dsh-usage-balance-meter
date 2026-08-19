@@ -103,6 +103,20 @@ active provider:
 It is registered only when a `commands` service is composed (interactive UI);
 in headless assemblies the tools still work.
 
+## Pricing defaults
+
+The plugin ships with the DeepSeek price table baked in (off-peak/peak tiers):
+
+- `opencode-go` → USD prices for DeepSeek V4 Flash / V4 Pro.
+- `deepseek-official` → CNY prices for DeepSeek V4 Flash / V4 Pro.
+
+You do NOT need to configure `prices` to get real costs. If you set a top-level
+`inputPricePerMillion`/`outputPricePerMillion`, that global flat price replaces
+the baked table. Only providers actually present in your Harness
+(`ctx.llm.listProviders()`, i.e. configured/mounted in your composition) are
+listed — absent providers are never shown, even though their prices exist in
+the defaults.
+
 ## Pricing notes
 
 - Costs are stored **per currency** in the ledger; different currencies are never summed together.
