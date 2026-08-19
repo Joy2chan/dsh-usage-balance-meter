@@ -1,0 +1,6 @@
+# dsh-usage-meter bundle patch: one host (tool) row over the web/headless profile.
+# The row name resolves from the profile's own node_modules where
+# `dsh plugin --profile web add <this package>` installed it.
+- insert:
+    - id: usage-meter
+      name: dsh-usage-meter
