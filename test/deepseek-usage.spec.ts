@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('dsh-usage-meter', () => {
+describe('dsh-usage-balance-meter', () => {
   it('registers the deepseek_api_status tool', () => {
     const { ctx, tool } = fakeContext()
     apply(ctx, { apiKeyEnv: 'DEEPSEEK_API_KEY', baseURL: 'https://api.deepseek.com' })

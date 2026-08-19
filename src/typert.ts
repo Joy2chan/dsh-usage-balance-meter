@@ -1,10 +1,10 @@
 /**
- * Host-face Typert manifest for `dsh-usage-meter`.
+ * Host-face Typert manifest for `dsh-usage-balance-meter`.
  *
  * The `typert-loader` scans the package's `./typert` export and registers the
  * invocations so the web client can call `remote.usageMeter.*`.
  *
- * @module dsh-usage-meter/typert
+ * @module dsh-usage-balance-meter/typert
  */
 
 import { z } from 'zod'
@@ -41,18 +41,18 @@ const costStateSchema = z.object({
 
 const costStateCodec = {
   mode: 'strict' as const,
-  typeSymbol: 'dsh-usage-meter#CostState',
+  typeSymbol: 'dsh-usage-balance-meter#CostState',
   schema: costStateSchema,
 }
 
 /** The full Typert manifest for this package. */
 export const TYPERT = {
-  package: 'dsh-usage-meter',
+  package: 'dsh-usage-balance-meter',
   face: 'host' as const,
   schemas: [],
   invocations: [
     {
-      id: 'dsh-usage-meter#usageMeter/getState',
+      id: 'dsh-usage-balance-meter#usageMeter/getState',
       service: 'usageMeter',
       namespace: 'usageMeter',
       method: 'getState',

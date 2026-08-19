@@ -1,4 +1,4 @@
-# dsh-usage-meter
+# dsh-usage-balance-meter
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that registers two model-facing tools:
 
@@ -10,9 +10,9 @@ This is a host-only plugin — no client bundle yet. It depends only on `ctx.too
 ## Install (from a dsh environment)
 
 ```sh
-dsh plugin --profile web add dsh-usage-meter
+dsh plugin --profile web add dsh-usage-balance-meter
 # or from a local checkout:
-dsh plugin --profile web add link:/absolute/path/to/dsh-usage-meter
+dsh plugin --profile web add link:/absolute/path/to/dsh-usage-balance-meter
 ```
 
 Then restart `dsh web` (plugin rows and bundles are scanned at startup).
@@ -21,7 +21,7 @@ Then restart `dsh web` (plugin rows and bundles are scanned at startup).
 
 ```yaml
 - id: usage-meter
-  name: dsh-usage-meter
+  name: dsh-usage-balance-meter
   config:
     apiKeyEnv: DEEPSEEK_API_KEY        # default; resolved through ctx.credentials, then env
     baseURL: https://api.deepseek.com  # optional; $DEEPSEEK_BASE_URL then public API

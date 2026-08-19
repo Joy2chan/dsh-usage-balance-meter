@@ -1,5 +1,5 @@
 /**
- * dsh-usage-meter — DeepSeek Harness usage & balance plugin.
+ * dsh-usage-balance-meter — DeepSeek Harness usage & balance plugin.
  *
  * Registers two model-facing tools:
  *  - `deepseek_api_status`: connected DeepSeek account balance + current
@@ -13,7 +13,7 @@
  * This is a host-only plugin: it needs `ctx.tools` and `ctx.llm`, and,
  * optionally, `ctx.credentials`.
  *
- * @module dsh-usage-meter
+ * @module dsh-usage-balance-meter
  */
 
 import { join } from 'node:path'
@@ -189,10 +189,10 @@ function resolveConfig(config: Config): ResolvedConfig {
   const baseURL = (config.baseURL ?? process.env.DEEPSEEK_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
   const balancePath = config.balancePath ?? DEFAULT_BALANCE_PATH
   if (!balancePath.startsWith('/')) {
-    throw new TypeError('dsh-usage-meter: balancePath must start with "/"')
+    throw new TypeError('dsh-usage-balance-meter: balancePath must start with "/"')
   }
   if (config.usagePath !== undefined && !config.usagePath.startsWith('/')) {
-    throw new TypeError('dsh-usage-meter: usagePath must start with "/"')
+    throw new TypeError('dsh-usage-balance-meter: usagePath must start with "/"')
   }
   const prices: PriceConfig | undefined = config.inputPricePerMillion === undefined
     && config.outputPricePerMillion === undefined
@@ -208,7 +208,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   const balanceAdapters = new Map<string, BalanceAdapterConfig>()
   for (const adapter of config.balanceProviders ?? []) {
     if (!adapter.path.startsWith('/')) {
-      throw new TypeError(`dsh-usage-meter: balanceProvider "${adapter.provider}" path must start with "/"`)
+      throw new TypeError(`dsh-usage-balance-meter: balanceProvider "${adapter.provider}" path must start with "/"`)
     }
     balanceAdapters.set(adapter.provider, adapter)
   }
@@ -813,7 +813,7 @@ export function apply(ctx: Context, config: Config): void {
   let ledger: Ledger
   try {
     ledger = workspaceRoot !== undefined && workspaceRoot.length > 0
-      ? Ledger.open(180, join(workspaceRoot, '.dsh-usage-meter'))
+      ? Ledger.open(180, join(workspaceRoot, '.dsh-usage-balance-meter'))
       : Ledger.open()
   } catch (error) {
     ledger = Ledger.open(180, null)

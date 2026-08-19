@@ -3,7 +3,7 @@
  * `$DSH_HOME/storages/usage-meter/ledger.json`, with today / month / total
  * roll-ups computed from the daily map.
  *
- * @module dsh-usage-meter/ledger
+ * @module dsh-usage-balance-meter/ledger
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'

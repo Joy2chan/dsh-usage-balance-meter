@@ -1,4 +1,4 @@
-# dsh-usage-meter
+# dsh-usage-balance-meter
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件：注册两个模型可调用的工具：
 
@@ -10,9 +10,9 @@
 ## 安装（在 dsh 环境里）
 
 ```sh
-dsh plugin --profile web add dsh-usage-meter
+dsh plugin --profile web add dsh-usage-balance-meter
 # 或本地调试：
-dsh plugin --profile web add link:/绝对路径/dsh-usage-meter
+dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
 ```
 
 然后重启 `dsh web`（插件行与 bundle 会在启动时扫描）。
@@ -21,7 +21,7 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-meter
 
 ```yaml
 - id: usage-meter
-  name: dsh-usage-meter
+  name: dsh-usage-balance-meter
   config:
     apiKeyEnv: DEEPSEEK_API_KEY        # 默认；走 ctx.credentials，其次环境变量
     baseURL: https://api.deepseek.com  # 可选；省略时用 $DEEPSEEK_BASE_URL 再退回公共 API

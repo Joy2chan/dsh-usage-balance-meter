@@ -1,5 +1,5 @@
 /**
- * dsh-usage-meter — web client footer.
+ * dsh-usage-balance-meter — web client footer.
  *
  * Reads the host ledger through `remote.usageMeter.getState()` (Typert) and
  * renders today's cost + budget status in the `sidebar.footer.action` seat.
@@ -8,7 +8,7 @@
  * build/browser to fully verify.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-usage-meter',
+  id: 'dsh-usage-balance-meter',
   factory: (require) => {
     const React = require('react')
     const { useState, useEffect } = React
@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
             overflow: 'hidden',
             textOverflow: 'ellipsis',
           },
-          title: 'dsh-usage-meter',
+          title: 'dsh-usage-balance-meter',
         },
         label,
       )

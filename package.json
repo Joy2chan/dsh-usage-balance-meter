@@ -1,5 +1,5 @@
 {
-  "name": "dsh-usage-meter",
+  "name": "dsh-usage-balance-meter",
   "version": "0.1.0",
   "description": "A DeepSeek Harness plugin that shows the connected DeepSeek API balance, per-session token usage, and an optional cost estimate. (host-side tool; UI coming later)",
   "type": "module",
@@ -35,7 +35,7 @@
   },
   "dshhub": {
     "schemaVersion": 1,
-    "displayName": "dsh-usage-meter",
+    "displayName": "dsh-usage-balance-meter",
     "summary": "DeepSeek Harness usage & balance plugin: official balance, per-session token usage, optional cost estimate.",
     "categories": [
       "费用",
