@@ -11,6 +11,7 @@ function fakeContext() {
         return () => {}
       },
     },
+    inject: () => {},
   }
   return { ctx, tool: () => tools[0] }
 }

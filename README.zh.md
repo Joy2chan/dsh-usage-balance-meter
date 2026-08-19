@@ -68,6 +68,20 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-meter
   - 否则为 `null`。
 - `balanceReason` — `ok` | `no-key` | `error` | `unsupported`。
 
+## 斜杠命令
+
+`/cost` 会把 `api_overview` 同一份投影以可读文本打印出来：
+
+```
+• DeepSeek (deepseek-official)
+  calls: 2 | input: 17 | output: 9 | cacheRead: 3 | cacheWrite: 0
+  models: deepseek-v4-flash
+  cost: USD 0.000025
+  balance: CNY 12.34 (granted 1.00 / topped-up 11.34)
+```
+
+只有在组合中存在 `commands` 服务（交互式 UI）时注册；headless 组装里工具仍可用。
+
 ## 开发
 
 ```sh
@@ -78,9 +92,9 @@ npm test        # vitest
 
 ## 路线图（规划中，尚未实现）
 
-- `/cost` 斜杠命令
 - ~~按 provider 聚合用量~~（已在 `api_overview` 实现）
 - ~~按 provider 的余额适配器~~（已实现：官方内置 + 可配置 HTTP 适配器）
-- 按 provider 的余额适配器（DeepSeek 官方开箱即用；网关可配置 HTTP 端点）
+- ~~`/cost` 斜杠命令~~（已实现：打印每个 provider 的用量/费用/余额）
 - 轻量设置持久化（价格、预算、阈值）
+- 持久化账本（今日 / 本月 / 累计）
 - 可选的最小化 Web UI footer

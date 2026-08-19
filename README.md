@@ -69,6 +69,21 @@ active provider:
   - Otherwise `null`.
 - `balanceReason` — `ok` | `no-key` | `error` | `unsupported`.
 
+## Slash command
+
+`/cost` prints the same projection `api_overview` returns, as human-readable text:
+
+```
+• DeepSeek (deepseek-official)
+  calls: 2 | input: 17 | output: 9 | cacheRead: 3 | cacheWrite: 0
+  models: deepseek-v4-flash
+  cost: USD 0.000025
+  balance: CNY 12.34 (granted 1.00 / topped-up 11.34)
+```
+
+It is registered only when a `commands` service is composed (interactive UI);
+in headless assemblies the tools still work.
+
 ## Development
 
 ```sh
@@ -79,9 +94,9 @@ npm test        # vitest
 
 ## Roadmap (planned, not yet implemented)
 
-- `/cost` slash command
 - ~~Per-provider usage aggregation~~ (done in `api_overview`)
 - ~~Per-provider balance adapters~~ (done: official built-in + configurable HTTP adapters)
-- Per-provider balance adapters (DeepSeek official out of the box; configurable HTTP endpoints for gateways)
+- ~~`/cost` slash command~~ (done: prints per-provider usage/cost/balance)
 - Lightweight settings persistence (pricing, budget, thresholds)
+- Persistent ledger for today / month / cumulative totals
 - Optional minimal Web UI footer

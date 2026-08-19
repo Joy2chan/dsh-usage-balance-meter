@@ -23,8 +23,10 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-commands'
 
 export const name = 'usage-meter'
 export const inject = ['tools', 'llm']
@@ -481,6 +483,119 @@ const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
   },
 } as const
 
+/**
+ * Build per-provider overview rows used by both `api_overview` and the
+ * `/cost` command. Resolves the key once, aggregates the current session's
+ * usage per provider, and attaches the official or configured balance.
+ */
+async function buildProviderOverviews(
+  ctx: Context,
+  resolved: ResolvedConfig,
+  signal: AbortSignal,
+  events: readonly SessionEvent[],
+): Promise<ProviderOverview[]> {
+  const apiKey = await resolveApiKey(ctx, resolved.apiKeyEnv)
+  const usageByProvider = collectProviderUsage(events)
+  return Promise.all(ctx.llm.listProviders().map(async (info) => {
+    const acc = usageByProvider.get(info.id)
+    const usage = acc?.usage ?? zeroUsage()
+    const cost = estimateCost(usage, resolved.price, resolved.currency)
+    const adapter = resolved.balanceAdapters.get(info.id)
+    let balance: ProviderBalanceInfo | null = null
+    let balanceReason: ProviderOverview['balanceReason']
+
+    if (apiKey === undefined) {
+      balanceReason = info.id === OFFICIAL_PROVIDER ? 'no-key' : (adapter === undefined ? 'unsupported' : 'no-key')
+    } else if (info.id === OFFICIAL_PROVIDER && adapter === undefined) {
+      try {
+        const view = await fetchOfficialBalance(resolved.baseURL, resolved.balancePath, apiKey, signal)
+        balance = {
+          adapter: 'official',
+          status: 'ok',
+          ...(view.currencies.length > 0 ? { currency: view.currencies[0]?.currency } : {}),
+          currencies: view.currencies,
+          raw: view as unknown as JsonValue,
+        }
+        balanceReason = 'ok'
+      } catch {
+        balance = null
+        balanceReason = 'error'
+      }
+    } else if (adapter !== undefined) {
+      try {
+        balance = await fetchCustomBalance(resolved.baseURL, adapter, apiKey, signal)
+        balanceReason = 'ok'
+      } catch {
+        balance = null
+        balanceReason = 'error'
+      }
+    } else {
+      balanceReason = 'unsupported'
+    }
+
+    return {
+      provider: info.id,
+      displayName: info.name,
+      calls: acc?.calls ?? 0,
+      models: acc === undefined ? [] : [...acc.models].sort(),
+      usage,
+      cost,
+      balance,
+      balanceReason,
+    }
+  }))
+}
+
+/** Render one provider's balance line for the `/cost` command. */
+function renderBalanceLine(provider: ProviderOverview): string {
+  const b = provider.balance
+  if (b === null) {
+    switch (provider.balanceReason) {
+      case 'no-key': return 'balance: no API key configured'
+      case 'error': return 'balance: query failed'
+      case 'no-balance-adapter': return 'balance: no adapter configured'
+      default: return 'balance: not supported'
+    }
+  }
+  if (b.adapter === 'official' && b.currencies !== undefined) {
+    const detail = b.currencies
+      .map(c => `${c.currency} ${c.totalBalance} (granted ${c.grantedBalance} / topped-up ${c.toppedUpBalance})`)
+      .join(', ')
+    return `balance: ${detail}`
+  }
+  const parts: string[] = []
+  if (b.value !== undefined) parts.push(String(b.value))
+  if (b.currency !== undefined) parts.push(b.currency)
+  return parts.length > 0 ? `balance: ${parts.join(' ')}` : 'balance: ok'
+}
+
+/** Human-readable `/cost` output from the same projection `api_overview` uses. */
+async function renderCostCommand(
+  ctx: Context,
+  resolved: ResolvedConfig,
+  invocation: CommandInvocation,
+  signal: AbortSignal,
+): Promise<CommandResult> {
+  const providers = await buildProviderOverviews(ctx, resolved, signal, invocation.agent.session.events)
+  if (providers.length === 0) {
+    return { kind: 'success', text: 'No active LLM providers found.' }
+  }
+  const lines: string[] = ['Usage & balance by provider:']
+  for (const p of providers) {
+    const u = p.usage
+    lines.push(`• ${p.displayName} (${p.provider})`)
+    lines.push(`  calls: ${p.calls} | input: ${u.inputTokens} | output: ${u.outputTokens} | cacheRead: ${u.cacheReadTokens} | cacheWrite: ${u.cacheWriteTokens}`)
+    if (p.models.length > 0) lines.push(`  models: ${p.models.join(', ')}`)
+    lines.push(`  cost: ${p.cost === null ? 'not configured' : `${p.cost.currency} ${p.cost.total.toFixed(6)}`}`)
+    lines.push(`  ${renderBalanceLine(p)}`)
+  }
+  if (resolved.price === undefined) {
+    lines.push('')
+    lines.push('Tip: set inputPricePerMillion/outputPricePerMillion to enable cost estimates.')
+  }
+  return { kind: 'success', text: lines.join('\n') }
+}
+
 /** Register the plugin's two model-facing tools. */
 export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
@@ -604,60 +719,17 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(_args, exec) {
-      const apiKey = await resolveApiKey(ctx, resolved.apiKeyEnv)
-      const usageByProvider = collectProviderUsage(exec.agent?.session.events ?? [])
-      const providers: ProviderOverview[] = await Promise.all(ctx.llm.listProviders().map(async (info) => {
-        const acc = usageByProvider.get(info.id)
-        const usage = acc?.usage ?? zeroUsage()
-        const cost = estimateCost(usage, resolved.price, resolved.currency)
-        const adapter = resolved.balanceAdapters.get(info.id)
-        let balance: ProviderBalanceInfo | null = null
-        let balanceReason: ProviderOverview['balanceReason']
-
-        if (apiKey === undefined) {
-          balanceReason = info.id === OFFICIAL_PROVIDER ? 'no-key' : (adapter === undefined ? 'unsupported' : 'no-key')
-        } else if (info.id === OFFICIAL_PROVIDER && adapter === undefined) {
-          // Official DeepSeek built-in adapter (only wallets with a key).
-          try {
-            const view = await fetchOfficialBalance(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
-            balance = {
-              adapter: 'official',
-              status: 'ok',
-              ...(view.currencies.length > 0 ? { currency: view.currencies[0]?.currency } : {}),
-              currencies: view.currencies,
-              raw: view as unknown as JsonValue,
-            }
-            balanceReason = 'ok'
-          } catch {
-            balance = null
-            balanceReason = 'error'
-          }
-        } else if (adapter !== undefined) {
-          // User-configured HTTP balance adapter for this provider.
-          try {
-            balance = await fetchCustomBalance(resolved.baseURL, adapter, apiKey, exec.signal)
-            balanceReason = 'ok'
-          } catch {
-            balance = null
-            balanceReason = 'error'
-          }
-        } else {
-          balanceReason = 'unsupported'
-        }
-
-        return {
-          provider: info.id,
-          displayName: info.name,
-          calls: acc?.calls ?? 0,
-          models: acc === undefined ? [] : [...acc.models].sort(),
-          usage,
-          cost,
-          balance,
-          balanceReason,
-        }
-      }))
+      const providers = await buildProviderOverviews(ctx, resolved, exec.signal, exec.agent?.session.events ?? [])
       return { providers }
     },
     presentCall: () => ({ card: 'generic', title: 'List provider usage & balance', kind: 'read' }),
   }))
+
+  ctx.inject(['commands'], (commandCtx) => {
+    commandCtx.commands.register({
+      name: 'cost',
+      description: 'show current session usage, cost, and balance by provider',
+      handler: invocation => renderCostCommand(ctx, resolved, invocation, invocation.signal),
+    })
+  })
 }

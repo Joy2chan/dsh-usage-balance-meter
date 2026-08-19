@@ -8,6 +8,7 @@ interface ToolLike {
 
 function fakeContext(providers: Array<{ id: string; name: string }>) {
   const tools: ToolLike[] = []
+  const commands: Array<{ name: string; handler: (invocation: unknown) => unknown }> = []
   const ctx = {
     get: () => undefined,
     tools: {
@@ -19,7 +20,18 @@ function fakeContext(providers: Array<{ id: string; name: string }>) {
     llm: {
       listProviders: () => providers,
     },
+    inject: (_services: string[], callback: (childCtx: { commands: { register: (def: { name: string; handler: (invocation: unknown) => unknown }) => void } }) => void) => {
+      callback({
+        commands: {
+          register: (def) => {
+            commands.push(def)
+            return () => {}
+          },
+        },
+      })
+    },
   }
+  return { ctx, tool: (name: string) => tools.find(t => t.name === name), command: (name: string) => commands.find(c => c.name === name) }
   return { ctx, tool: (name: string) => tools.find(t => t.name === name) }
 }
 
@@ -162,5 +174,48 @@ describe('api_overview', () => {
       raw: { grants: [{ id: 'g1', amount: 25 }] },
     })
     expect(openai.balanceReason).toBe('ok')
+  })
+})
+
+describe('/cost command', () => {
+  it('registers and renders a text summary from the shared projection', async () => {
+    const { ctx, command } = fakeContext([
+      { id: 'deepseek-official', name: 'DeepSeek' },
+    ])
+    apply(ctx, {
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      baseURL: 'https://api.deepseek.com',
+      inputPricePerMillion: 1,
+      outputPricePerMillion: 2,
+      currency: 'USD',
+    })
+
+    const handler = command('cost')?.handler as (invocation: unknown) => Promise<{ kind: string; text: string }>
+    expect(handler).toBeTypeOf('function')
+
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        is_available: true,
+        balance_infos: [{ currency: 'CNY', total_balance: '12.34', granted_balance: '1.00', topped_up_balance: '11.34' }],
+      }),
+      text: async () => '',
+    }))
+    process.env.DEEPSEEK_API_KEY = 'sk-test'
+
+    const agent = {
+      session: {
+        events: [
+          { type: 'assistant/message', data: { message: { source: { provider: 'deepseek-official', model: 'deepseek-v4-flash' } }, usage: { inputTokens: 1000000, outputTokens: 500000 } } },
+        ],
+      },
+    }
+    const result = await handler({ agent, signal: new AbortController().signal, rawInput: '', commandId: 'x' })
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('DeepSeek')
+    expect(result.text).toContain('calls: 1')
+    expect(result.text).toContain('cost: USD 2.000000')
+    expect(result.text).toContain('balance: CNY 12.34 (granted 1.00 / topped-up 11.34)')
   })
 })
