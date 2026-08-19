@@ -41,6 +41,41 @@ export interface BalanceAdapterConfig {
     /** Currency label for the extracted value. */
     currency?: string;
 }
+/** A single pricing tier: USD per 1M tokens for each bucket. */
+export interface PriceFields {
+    /** Price per 1M input tokens. */
+    inputPricePerMillion?: number;
+    /** Price per 1M output tokens. */
+    outputPricePerMillion?: number;
+    /** Price per 1M cache-read tokens. */
+    cacheReadPricePerMillion?: number;
+    /** Price per 1M cache-write tokens. */
+    cacheWritePricePerMillion?: number;
+}
+/** A provider's price table (default tier + exact model tiers). */
+export interface ProviderPriceTable {
+    /** Default tier for models without an exact entry under this provider. */
+    default?: PriceFields;
+    /** Exact per-model tiers. */
+    models?: Record<string, PriceFields>;
+}
+/** Optional per-provider / per-model pricing overrides. */
+export interface PriceTable {
+    /** Global default tier; the top-level `*PricePerMillion` fields also act as a global default. */
+    default?: PriceFields;
+    /** Per-provider tables. */
+    providers?: Record<string, ProviderPriceTable>;
+}
+/** Resolved (normalized) per-provider price table. */
+export interface ResolvedProviderPriceTable {
+    default?: PriceConfig;
+    models?: Record<string, PriceConfig>;
+}
+/** Resolved (normalized) price table used at runtime. */
+export interface ResolvedPriceTable {
+    default?: PriceConfig;
+    providers?: Record<string, ResolvedProviderPriceTable>;
+}
 /** Budget configuration: a periodic cost limit with a warning band. */
 export interface BudgetConfig {
     /** Whether the budget is enforced for display/command output. Defaults to false. */
@@ -90,8 +125,16 @@ export interface Config {
     budget?: BudgetConfig;
     /** Optional budget warning/error thresholds (percentages). */
     thresholds?: ThresholdsConfig;
+    /** Optional per-provider / per-model pricing overrides. */
+    prices?: PriceTable;
 }
 export declare const Config: z<Config>;
+interface PriceConfig {
+    readonly inputPricePerMillion: number;
+    readonly outputPricePerMillion: number;
+    readonly cacheReadPricePerMillion: number;
+    readonly cacheWritePricePerMillion: number;
+}
 /** Register the plugin's two model-facing tools. */
 /** Per-session cost/token projection surfaced to the web client footer. */
 interface CostUsageProjection {

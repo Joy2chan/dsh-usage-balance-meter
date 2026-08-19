@@ -66,6 +66,46 @@ export interface BalanceAdapterConfig {
   currency?: string
 }
 
+/** A single pricing tier: USD per 1M tokens for each bucket. */
+export interface PriceFields {
+  /** Price per 1M input tokens. */
+  inputPricePerMillion?: number
+  /** Price per 1M output tokens. */
+  outputPricePerMillion?: number
+  /** Price per 1M cache-read tokens. */
+  cacheReadPricePerMillion?: number
+  /** Price per 1M cache-write tokens. */
+  cacheWritePricePerMillion?: number
+}
+
+/** A provider's price table (default tier + exact model tiers). */
+export interface ProviderPriceTable {
+  /** Default tier for models without an exact entry under this provider. */
+  default?: PriceFields
+  /** Exact per-model tiers. */
+  models?: Record<string, PriceFields>
+}
+
+/** Optional per-provider / per-model pricing overrides. */
+export interface PriceTable {
+  /** Global default tier; the top-level `*PricePerMillion` fields also act as a global default. */
+  default?: PriceFields
+  /** Per-provider tables. */
+  providers?: Record<string, ProviderPriceTable>
+}
+
+/** Resolved (normalized) per-provider price table. */
+export interface ResolvedProviderPriceTable {
+  default?: PriceConfig
+  models?: Record<string, PriceConfig>
+}
+
+/** Resolved (normalized) price table used at runtime. */
+export interface ResolvedPriceTable {
+  default?: PriceConfig
+  providers?: Record<string, ResolvedProviderPriceTable>
+}
+
 /** Budget configuration: a periodic cost limit with a warning band. */
 export interface BudgetConfig {
   /** Whether the budget is enforced for display/command output. Defaults to false. */
@@ -117,7 +157,26 @@ export interface Config {
   budget?: BudgetConfig
   /** Optional budget warning/error thresholds (percentages). */
   thresholds?: ThresholdsConfig
+  /** Optional per-provider / per-model pricing overrides. */
+  prices?: PriceTable
 }
+
+const priceFieldsSchema: z<PriceFields> = z.object({
+  inputPricePerMillion: z.number().min(0),
+  outputPricePerMillion: z.number().min(0),
+  cacheReadPricePerMillion: z.number().min(0),
+  cacheWritePricePerMillion: z.number().min(0),
+})
+
+const providerPriceTableSchema: z<ProviderPriceTable> = z.object({
+  default: priceFieldsSchema,
+  models: z.dict(priceFieldsSchema),
+})
+
+const priceTableSchema: z<PriceTable> = z.object({
+  default: priceFieldsSchema,
+  providers: z.dict(providerPriceTableSchema),
+})
 
 const balanceAdapterSchema: z<BalanceAdapterConfig> = z.object({
   provider: z.string().required(),
@@ -151,6 +210,7 @@ export const Config: z<Config> = z.object({
     warnPercent: z.number().min(0).max(100).default(80),
     errorPercent: z.number().min(0).max(100).default(100),
   }),
+  prices: priceTableSchema,
 })
 
 interface PriceConfig {
@@ -170,6 +230,7 @@ interface ResolvedConfig {
   readonly balanceAdapters: ReadonlyMap<string, BalanceAdapterConfig>
   readonly budget: ResolvedBudget
   readonly thresholds: ResolvedThresholds
+  readonly prices: ResolvedPriceTable
 }
 
 interface ResolvedBudget {
@@ -183,6 +244,35 @@ interface ResolvedBudget {
 interface ResolvedThresholds {
   readonly warnPercent: number
   readonly errorPercent: number
+}
+
+/** Convert optional price fields into a resolved price config. */
+function normalizePriceFields(fields: PriceFields | undefined): PriceConfig | undefined {
+  if (fields === undefined
+    || (fields.inputPricePerMillion === undefined
+      && fields.outputPricePerMillion === undefined
+      && fields.cacheReadPricePerMillion === undefined
+      && fields.cacheWritePricePerMillion === undefined)) {
+    return undefined
+  }
+  return {
+    inputPricePerMillion: fields.inputPricePerMillion ?? 0,
+    outputPricePerMillion: fields.outputPricePerMillion ?? 0,
+    cacheReadPricePerMillion: fields.cacheReadPricePerMillion ?? 0,
+    cacheWritePricePerMillion: fields.cacheWritePricePerMillion ?? 0,
+  }
+}
+
+/** Resolve the price to bill for one provider/model call. */
+function priceFor(provider: string, model: string | undefined, resolved: ResolvedConfig): PriceConfig | undefined {
+  const providerTable = resolved.prices.providers?.[provider]
+  if (providerTable !== undefined) {
+    if (model !== undefined && providerTable.models?.[model] !== undefined) {
+      return providerTable.models?.[model]
+    }
+    if (providerTable.default !== undefined) return providerTable.default
+  }
+  return resolved.prices.default ?? resolved.price
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
@@ -213,6 +303,30 @@ function resolveConfig(config: Config): ResolvedConfig {
     }
     balanceAdapters.set(adapter.provider, adapter)
   }
+  const priceTable: ResolvedPriceTable = {
+    ...config.prices?.default !== undefined ? { default: normalizePriceFields(config.prices.default) } : {},
+    ...config.prices?.providers !== undefined
+      ? {
+        providers: Object.fromEntries(
+          Object.entries(config.prices.providers).map(([provider, table]) => [
+            provider,
+            {
+              ...table.default !== undefined ? { default: normalizePriceFields(table.default) } : {},
+              ...table.models !== undefined
+                ? {
+                  models: Object.fromEntries(
+                    Object.entries(table.models)
+                      .map(([model, fields]) => [model, normalizePriceFields(fields)] as const)
+                      .filter((entry): entry is readonly [string, PriceConfig] => entry[1] !== undefined),
+                  ),
+                }
+                : {},
+            },
+          ]),
+        ),
+      }
+      : {},
+  }
   const budgetConfig = config.budget ?? {}
   const budget: ResolvedBudget = {
     enabled: budgetConfig.enabled === true,
@@ -236,6 +350,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     balanceAdapters,
     budget,
     thresholds,
+    prices: priceTable,
   }
 }
 
@@ -660,7 +775,7 @@ async function buildProviderOverviews(
   return Promise.all(ctx.llm.listProviders().map(async (info) => {
     const acc = usageByProvider.get(info.id)
     const usage = acc?.usage ?? zeroUsage()
-    const cost = estimateCost(usage, resolved.price, resolved.currency)
+    const cost = estimateCost(usage, priceFor(info.id, undefined, resolved), resolved.currency)
     const adapter = resolved.balanceAdapters.get(info.id)
     let balance: ProviderBalanceInfo | null = null
     let balanceReason: ProviderOverview['balanceReason']
@@ -860,7 +975,7 @@ export function apply(ctx: Context, config: Config): void {
               ...options.sessionId !== undefined ? { sessionId: String(options.sessionId) } : {},
               timestamp: Date.now(),
               usage: toLedgerUsage(sessionUsage),
-              cost: costOfUsage(sessionUsage, resolved().price),
+              cost: costOfUsage(sessionUsage, priceFor(options.provider, options.model, resolved())),
             })
           } catch (error) {
             ;(ctx as { logger?: { warn?: (msg: string) => void } }).logger?.warn?.(`[usage-meter] ledger account failed: ${String(error)}`)
@@ -918,7 +1033,7 @@ export function apply(ctx: Context, config: Config): void {
           cacheWriteTokens: u.cacheWriteTokens ?? 0,
           reasoningTokens: u.reasoningTokens ?? 0,
         }
-        const cost = costOfUsage(sessionUsage, resolved().price)
+        const cost = costOfUsage(sessionUsage, priceFor(event.data.message.source.provider, event.data.message.source.model, resolved()))
         return {
           input: state.input + sessionUsage.inputTokens,
           output: state.output + sessionUsage.outputTokens,

@@ -33,6 +33,22 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
     # cacheWritePricePerMillion: 0.25
     # currency: USD
     # 可选：非官方 provider 的 HTTP 余额适配器（网关 / LiteLLM 等）
+    # 按 provider / 按模型分别配价（未命中时回退到上面的全局价）：
+    # prices:
+    #   default:
+    #     inputPricePerMillion: 0.50
+    #     outputPricePerMillion: 2.00
+    #     cacheReadPricePerMillion: 0.50
+    #     cacheWritePricePerMillion: 0.25
+    #   providers:
+    #     opencode-go:
+    #       default:
+    #         inputPricePerMillion: 0.40
+    #         outputPricePerMillion: 1.60
+    #       models:
+    #         deepseek-v4-flash:
+    #           inputPricePerMillion: 0.50
+    #           outputPricePerMillion: 2.00
     # balanceProviders:
     #   - provider: openai
     #     baseURL: https://api.openai.com   # 可选；默认使用插件 baseURL

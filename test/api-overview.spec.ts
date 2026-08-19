@@ -222,3 +222,52 @@ describe('/cost command', () => {
     expect(result.text).toContain('balance: CNY 12.34 (granted 1.00 / topped-up 11.34)')
   })
 })
+
+describe('per-provider pricing', () => {
+  it('uses provider/model-specific prices for cost estimation', async () => {
+    const { ctx, tool } = fakeContext([
+      { id: 'deepseek-official', name: 'DeepSeek' },
+      { id: 'opencode-go', name: 'OpenCode Go' },
+    ])
+    apply(ctx, {
+      apiKeyEnv: 'DEEPSEEK_API_KEY',
+      baseURL: 'https://api.deepseek.com',
+      inputPricePerMillion: 10, // global fallback (should NOT be used when overridden)
+      outputPricePerMillion: 20,
+      prices: {
+        providers: {
+          'opencode-go': {
+            default: { inputPricePerMillion: 1, outputPricePerMillion: 2 },
+            models: { 'deepseek-v4-flash': { inputPricePerMillion: 0.5, outputPricePerMillion: 1 } },
+          },
+        },
+      },
+    })
+
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ is_available: true, balance_infos: [] }),
+      text: async () => '',
+    }))
+    process.env.DEEPSEEK_API_KEY = 'sk-test'
+
+    const agent = {
+      session: {
+        events: [
+          { type: 'assistant/message', data: { message: { source: { provider: 'opencode-go', model: 'deepseek-v4-flash' } }, usage: { inputTokens: 1000000, outputTokens: 1000000 } } },
+          { type: 'assistant/message', data: { message: { source: { provider: 'deepseek-official', model: 'deepseek-v4-pro' } }, usage: { inputTokens: 1000000, outputTokens: 1000000 } } },
+        ],
+      },
+    }
+
+    const result = await tool('api_overview')!.execute({}, { agent, signal: new AbortController().signal }) as {
+      providers: Array<{ provider: string; cost: { total: number } | null }>
+    }
+    const byId = new Map(result.providers.map(p => [p.provider, p]))
+    // api_overview row uses the provider default (1 + 2 = 3); ledger uses the exact model price (0.5 + 1 = 1.5).
+    expect(byId.get('opencode-go')!.cost!.total).toBeCloseTo(3)
+    // deepseek-official falls back to global: 10 + 20 = 30
+    expect(byId.get('deepseek-official')!.cost!.total).toBeCloseTo(30)
+  })
+})

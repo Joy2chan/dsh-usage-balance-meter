@@ -33,6 +33,22 @@ Then restart `dsh web` (plugin rows and bundles are scanned at startup).
     # cacheWritePricePerMillion: 0.25
     # currency: USD
     # Optional per-provider HTTP balance adapters (for gateways / non-official providers):
+    # Per-provider / per-model prices (fall back to the global values above):
+    # prices:
+    #   default:
+    #     inputPricePerMillion: 0.50
+    #     outputPricePerMillion: 2.00
+    #     cacheReadPricePerMillion: 0.50
+    #     cacheWritePricePerMillion: 0.25
+    #   providers:
+    #     opencode-go:
+    #       default:
+    #         inputPricePerMillion: 0.40
+    #         outputPricePerMillion: 1.60
+    #       models:
+    #         deepseek-v4-flash:
+    #           inputPricePerMillion: 0.50
+    #           outputPricePerMillion: 2.00
     # balanceProviders:
     #   - provider: openai
     #     baseURL: https://api.openai.com   # optional; defaults to plugin baseURL
