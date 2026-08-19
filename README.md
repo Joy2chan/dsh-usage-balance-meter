@@ -32,6 +32,15 @@ Then restart `dsh web` (plugin rows and bundles are scanned at startup).
     # cacheReadPricePerMillion: 0.25
     # cacheWritePricePerMillion: 0.25
     # currency: USD
+    # Optional per-provider HTTP balance adapters (for gateways / non-official providers):
+    # balanceProviders:
+    #   - provider: openai
+    #     baseURL: https://api.openai.com   # optional; defaults to plugin baseURL
+    #     path: /v1/dashboard/billing/credit_grants
+    #     headers: {}                        # optional
+    #     auth: bearer                       # bearer | none
+    #     extract: grants.0.error            # optional dot-path into the JSON response
+    #     currency: USD
 ```
 
 ## Tool output shape
@@ -54,7 +63,10 @@ active provider:
 - `models` — distinct model ids used by that provider.
 - `usage` — token buckets (input/output/cache/reasoning).
 - `cost` — estimated cost, or `null` when no pricing is configured.
-- `balance` — normalized balance for `deepseek-official`, or `null`.
+- `balance` — balance info for the provider:
+  - `deepseek-official` uses the built-in official adapter (`adapter: "official"` with `currencies`).
+  - A provider with a configured `balanceProviders` entry uses the custom HTTP adapter (`adapter: "custom"` with optional `value`/`currency`/`raw`).
+  - Otherwise `null`.
 - `balanceReason` — `ok` | `no-key` | `error` | `unsupported`.
 
 ## Development
@@ -69,6 +81,7 @@ npm test        # vitest
 
 - `/cost` slash command
 - ~~Per-provider usage aggregation~~ (done in `api_overview`)
+- ~~Per-provider balance adapters~~ (done: official built-in + configurable HTTP adapters)
 - Per-provider balance adapters (DeepSeek official out of the box; configurable HTTP endpoints for gateways)
 - Lightweight settings persistence (pricing, budget, thresholds)
 - Optional minimal Web UI footer

@@ -5,13 +5,13 @@
  *  - `deepseek_api_status`: connected DeepSeek account balance + current
  *    session token usage + optional cost estimate.
  *  - `api_overview`: all active LLM providers (`ctx.llm.listProviders()`) with
- *    per-provider call counts, token usage, optional cost, and balance status
- *    (DeepSeek official out of the box; other providers are marked
- *    "unsupported" until a balance adapter is configured).
+ *    per-provider call counts, token usage, optional cost, and balance status.
+ *    The official DeepSeek balance adapter works out of the box; other
+ *    providers can be wired through configurable HTTP balance adapters
+ *    (`balanceProviders`).
  *
  * This is a host-only plugin: it needs `ctx.tools` and `ctx.llm`, and,
- * optionally, `ctx.credentials`. It intentionally does not depend on the
- * `llm-deepseek` adapter being mounted.
+ * optionally, `ctx.credentials`.
  *
  * @module dsh-usage-meter
  */
@@ -34,13 +34,35 @@ const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_BALANCE_PATH = '/user/balance'
 const OFFICIAL_PROVIDER = 'deepseek-official'
 
-/** Plugin configuration. */
+/**
+ * One configurable HTTP balance adapter for a provider route. Lets non-official
+ * providers (gateways, LiteLLM, …) expose a balance without writing adapter
+ * code: point at any JSON endpoint, optionally extract a numeric/string value
+ * with a dot path, and label the currency.
+ */
+export interface BalanceAdapterConfig {
+  /** Provider route id this adapter applies to (`ctx.llm` provider id). */
+  provider: string
+  /** Optional endpoint base; falls back to the plugin `baseURL`. */
+  baseURL?: string
+  /** Path appended to the base URL, e.g. `/balance`. */
+  path: string
+  /** Optional extra HTTP headers (JSON object). Authorization is added unless `auth: "none"`. */
+  headers?: Record<string, string>
+  /** How to send the API key. Defaults to `bearer`. */
+  auth?: 'bearer' | 'none'
+  /** Optional dot-path into the JSON response (e.g. `data.balance`) to use as the value. */
+  extract?: string
+  /** Currency label for the extracted value. */
+  currency?: string
+}
+
 export interface Config {
   /** Credential reference (environment-variable name) resolved per call; defaults to `DEEPSEEK_API_KEY`. */
   apiKeyEnv?: string
   /** API base URL; falls back to `$DEEPSEEK_BASE_URL`, then the public API. */
   baseURL?: string
-  /** Path appended to `baseURL` for the balance request; defaults to `/user/balance`. */
+  /** Path appended to `baseURL` for the official balance request; defaults to `/user/balance`. */
   balancePath?: string
   /**
    * Optional path appended to `baseURL` for an account-level usage request.
@@ -58,9 +80,20 @@ export interface Config {
   cacheWritePricePerMillion?: number
   /** Currency label for the cost estimate. Defaults to `USD`. */
   currency?: string
+  /** Optional per-provider HTTP balance adapters for non-official providers. */
+  balanceProviders?: BalanceAdapterConfig[]
 }
 
-/** Schemastery config for Loader defaults and generated configuration docs. */
+const balanceAdapterSchema: z<BalanceAdapterConfig> = z.object({
+  provider: z.string().required(),
+  baseURL: z.string(),
+  path: z.string().required(),
+  headers: z.dict(z.string()),
+  auth: z.union(['bearer', 'none']),
+  extract: z.string(),
+  currency: z.string(),
+})
+
 export const Config: z<Config> = z.object({
   apiKeyEnv: z.string().role('credential-ref').default(DEFAULT_API_KEY_ENV),
   baseURL: z.string(),
@@ -71,6 +104,7 @@ export const Config: z<Config> = z.object({
   cacheReadPricePerMillion: z.number().min(0),
   cacheWritePricePerMillion: z.number().min(0),
   currency: z.string().default('USD'),
+  balanceProviders: z.array(balanceAdapterSchema).default([]),
 })
 
 interface PriceConfig {
@@ -87,6 +121,7 @@ interface ResolvedConfig {
   readonly usagePath?: string
   readonly price?: PriceConfig
   readonly currency: string
+  readonly balanceAdapters: ReadonlyMap<string, BalanceAdapterConfig>
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
@@ -110,6 +145,13 @@ function resolveConfig(config: Config): ResolvedConfig {
       cacheReadPricePerMillion: config.cacheReadPricePerMillion ?? 0,
       cacheWritePricePerMillion: config.cacheWritePricePerMillion ?? 0,
     }
+  const balanceAdapters = new Map<string, BalanceAdapterConfig>()
+  for (const adapter of config.balanceProviders ?? []) {
+    if (!adapter.path.startsWith('/')) {
+      throw new TypeError(`dsh-usage-meter: balanceProvider "${adapter.provider}" path must start with "/"`)
+    }
+    balanceAdapters.set(adapter.provider, adapter)
+  }
   return {
     apiKeyEnv,
     baseURL,
@@ -117,6 +159,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     ...config.usagePath === undefined ? {} : { usagePath: config.usagePath },
     ...prices === undefined ? {} : { price: prices },
     currency: config.currency ?? 'USD',
+    balanceAdapters,
   }
 }
 
@@ -230,31 +273,43 @@ function estimateCost(usage: SessionUsage, price: PriceConfig | undefined, curre
   }
 }
 
-/** Perform one authenticated GET and parse the JSON body. */
-async function getJson(endpoint: string, apiKey: string, signal: AbortSignal): Promise<unknown> {
+/**
+ * Perform one GET. Adds `Authorization: Bearer` unless `bearer` is false.
+ * @returns parsed JSON body.
+ */
+async function getJson(
+  endpoint: string,
+  apiKey: string,
+  signal: AbortSignal,
+  headers: Record<string, string> = {},
+  bearer = true,
+): Promise<unknown> {
   const response = await fetch(endpoint, {
     method: 'GET',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      ...(bearer ? { Authorization: `Bearer ${apiKey}` } : {}),
       Accept: 'application/json',
+      ...headers,
     },
     signal,
   })
   if (!response.ok) {
     const body = await response.text().catch(() => '')
-    throw new Error(`DeepSeek API request to ${endpoint} failed (HTTP ${response.status})${body ? `: ${body}` : ''}`)
+    throw new Error(`HTTP ${response.status} from ${endpoint}${body ? `: ${body}` : ''}`)
   }
   return response.json()
 }
 
-interface BalanceView {
+interface OfficialBalanceCurrencies {
+  currency: string
+  totalBalance: string
+  grantedBalance: string
+  toppedUpBalance: string
+}
+
+interface OfficialBalanceView {
   isAvailable: boolean
-  currencies: Array<{
-    currency: string
-    totalBalance: string
-    grantedBalance: string
-    toppedUpBalance: string
-  }>
+  currencies: OfficialBalanceCurrencies[]
 }
 
 interface BalanceResponse {
@@ -267,7 +322,7 @@ interface BalanceResponse {
   }>
 }
 
-async function fetchBalanceView(baseURL: string, balancePath: string, apiKey: string, signal: AbortSignal): Promise<BalanceView> {
+async function fetchOfficialBalance(baseURL: string, balancePath: string, apiKey: string, signal: AbortSignal): Promise<OfficialBalanceView> {
   const data = await getJson(`${baseURL}${balancePath}`, apiKey, signal) as BalanceResponse
   return {
     isAvailable: data.is_available === true,
@@ -280,6 +335,44 @@ async function fetchBalanceView(baseURL: string, balancePath: string, apiKey: st
   }
 }
 
+/** Read a dot path (e.g. `data.balance`) from an arbitrary JSON value. */
+function extractAtPath(value: unknown, path: string): unknown {
+  let cursor = value
+  for (const segment of path.split('.')) {
+    if (cursor === null || typeof cursor !== 'object') return undefined
+    cursor = (cursor as Record<string, unknown>)[segment]
+  }
+  return cursor
+}
+
+/** Balance detail attached to one provider in `api_overview`. */
+interface ProviderBalanceInfo {
+  adapter: 'official' | 'custom'
+  status: 'ok'
+  value?: number | string
+  currency?: string
+  currencies?: OfficialBalanceCurrencies[]
+  raw?: JsonValue
+}
+
+async function fetchCustomBalance(
+  baseURL: string,
+  adapter: BalanceAdapterConfig,
+  apiKey: string,
+  signal: AbortSignal,
+): Promise<ProviderBalanceInfo> {
+  const endpoint = `${adapter.baseURL ?? baseURL}${adapter.path}`
+  const raw = await getJson(endpoint, apiKey, signal, adapter.headers ?? {}, (adapter.auth ?? 'bearer') !== 'none')
+  const extracted = adapter.extract === undefined ? undefined : extractAtPath(raw, adapter.extract)
+  return {
+    adapter: 'custom',
+    status: 'ok',
+    ...(typeof extracted === 'number' || typeof extracted === 'string' ? { value: extracted } : {}),
+    ...(adapter.currency !== undefined ? { currency: adapter.currency } : {}),
+    raw: raw as JsonValue,
+  }
+}
+
 /** Provider row returned by `api_overview`. */
 interface ProviderOverview {
   provider: string
@@ -288,8 +381,8 @@ interface ProviderOverview {
   models: string[]
   usage: SessionUsage
   cost: CostEstimate | null
-  balance: BalanceView | null
-  balanceReason: 'unsupported' | 'no-key' | 'error' | 'ok'
+  balance: ProviderBalanceInfo | null
+  balanceReason: 'ok' | 'no-key' | 'error' | 'unsupported' | 'no-balance-adapter'
 }
 
 const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
@@ -341,10 +434,17 @@ const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
-                  isAvailable: { type: 'boolean', required: true },
+                  adapter: { type: 'string', required: true, enum: ['official', 'custom'] },
+                  status: { type: 'string', required: true, enum: ['ok'] },
+                  value: {
+                    oneOf: [
+                      { type: 'number' },
+                      { type: 'string' },
+                    ],
+                  },
+                  currency: { type: 'string' },
                   currencies: {
                     type: 'array',
-                    required: true,
                     items: {
                       type: 'object',
                       additionalProperties: false,
@@ -356,6 +456,16 @@ const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
                       },
                     },
                   },
+                  raw: {
+                    oneOf: [
+                      { type: 'object', additionalProperties: true },
+                      { type: 'array' },
+                      { type: 'string' },
+                      { type: 'number' },
+                      { type: 'boolean' },
+                      { type: 'null' },
+                    ],
+                  },
                 },
               },
               { type: 'null' },
@@ -363,7 +473,7 @@ const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
           },
           balanceReason: {
             type: 'string',
-            enum: ['unsupported', 'no-key', 'error', 'ok'],
+            enum: ['ok', 'no-key', 'error', 'unsupported', 'no-balance-adapter'],
           },
         },
       },
@@ -467,7 +577,7 @@ export function apply(ctx: Context, config: Config): void {
       if (resolved.usagePath !== undefined) {
         accountUsage = await getJson(`${resolved.baseURL}${resolved.usagePath}`, apiKey, exec.signal) as Record<string, JsonValue>
       }
-      const balance = await fetchBalanceView(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
+      const balance = await fetchOfficialBalance(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
       return {
         balance,
         usage,
@@ -500,21 +610,41 @@ export function apply(ctx: Context, config: Config): void {
         const acc = usageByProvider.get(info.id)
         const usage = acc?.usage ?? zeroUsage()
         const cost = estimateCost(usage, resolved.price, resolved.currency)
-        let balance: BalanceView | null = null
-        let balanceReason: ProviderOverview['balanceReason'] = 'unsupported'
-        if (info.id === OFFICIAL_PROVIDER) {
-          if (apiKey === undefined) {
-            balanceReason = 'no-key'
-          } else {
-            try {
-              balance = await fetchBalanceView(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
-              balanceReason = 'ok'
-            } catch {
-              balance = null
-              balanceReason = 'error'
+        const adapter = resolved.balanceAdapters.get(info.id)
+        let balance: ProviderBalanceInfo | null = null
+        let balanceReason: ProviderOverview['balanceReason']
+
+        if (apiKey === undefined) {
+          balanceReason = info.id === OFFICIAL_PROVIDER ? 'no-key' : (adapter === undefined ? 'unsupported' : 'no-key')
+        } else if (info.id === OFFICIAL_PROVIDER && adapter === undefined) {
+          // Official DeepSeek built-in adapter (only wallets with a key).
+          try {
+            const view = await fetchOfficialBalance(resolved.baseURL, resolved.balancePath, apiKey, exec.signal)
+            balance = {
+              adapter: 'official',
+              status: 'ok',
+              ...(view.currencies.length > 0 ? { currency: view.currencies[0]?.currency } : {}),
+              currencies: view.currencies,
+              raw: view as unknown as JsonValue,
             }
+            balanceReason = 'ok'
+          } catch {
+            balance = null
+            balanceReason = 'error'
           }
+        } else if (adapter !== undefined) {
+          // User-configured HTTP balance adapter for this provider.
+          try {
+            balance = await fetchCustomBalance(resolved.baseURL, adapter, apiKey, exec.signal)
+            balanceReason = 'ok'
+          } catch {
+            balance = null
+            balanceReason = 'error'
+          }
+        } else {
+          balanceReason = 'unsupported'
         }
+
         return {
           provider: info.id,
           displayName: info.name,

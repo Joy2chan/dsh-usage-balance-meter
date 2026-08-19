@@ -32,6 +32,15 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-meter
     # cacheReadPricePerMillion: 0.25
     # cacheWritePricePerMillion: 0.25
     # currency: USD
+    # 可选：非官方 provider 的 HTTP 余额适配器（网关 / LiteLLM 等）
+    # balanceProviders:
+    #   - provider: openai
+    #     baseURL: https://api.openai.com   # 可选；默认使用插件 baseURL
+    #     path: /v1/dashboard/billing/credit_grants
+    #     headers: {}                        # 可选
+    #     auth: bearer                       # bearer | none
+    #     extract: grants.0.error            # 可选：JSON 响应里的点路径
+    #     currency: USD
 ```
 
 ## 工具返回结构
@@ -53,7 +62,10 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-meter
 - `models` — 该 provider 用到的不同模型 id。
 - `usage` — token 桶（输入/输出/缓存/reasoning）。
 - `cost` — 费用估算，未配置价格时为 `null`。
-- `balance` — `deepseek-official` 的归一化余额，其他为 `null`。
+- `balance` — 该 provider 的余额信息：
+  - `deepseek-official` 使用内置官方适配器（`adapter: "official"`，带 `currencies`）。
+  - 配置了 `balanceProviders` 的 provider 使用自定义 HTTP 适配器（`adapter: "custom"`，可选 `value`/`currency`/`raw`）。
+  - 否则为 `null`。
 - `balanceReason` — `ok` | `no-key` | `error` | `unsupported`。
 
 ## 开发
@@ -68,6 +80,7 @@ npm test        # vitest
 
 - `/cost` 斜杠命令
 - ~~按 provider 聚合用量~~（已在 `api_overview` 实现）
+- ~~按 provider 的余额适配器~~（已实现：官方内置 + 可配置 HTTP 适配器）
 - 按 provider 的余额适配器（DeepSeek 官方开箱即用；网关可配置 HTTP 端点）
 - 轻量设置持久化（价格、预算、阈值）
 - 可选的最小化 Web UI footer
