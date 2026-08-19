@@ -30,6 +30,7 @@ import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-sett
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { Ledger, localDayKey, type LedgerUsage, type TotalsView } from './ledger.js'
 import type {} from '@deepseek-ai/dsh-session-projection'
 
@@ -884,6 +885,16 @@ export function apply(ctx: Context, config: Config): void {
 
   // Surface per-session cost/tokens to the web client footer through the
   // session-projection seam.
+  // Nudge the model to call the meter tools when the user asks about cost,
+  // balance, usage, quota, or budget.
+  ctx.inject(['systemPrompt'], (promptCtx) => {
+    promptCtx.systemPrompt.section({
+      name: 'tool:usage-meter',
+      order: 118,
+      text: 'When the user asks about DeepSeek API balance, quota, credits, token usage, cost, or budget, use the deepseek_api_status, api_overview, or usage_summary tools to read live data instead of answering from memory.',
+    })
+  })
+
   ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register({
       key: 'costUsage',
