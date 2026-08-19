@@ -32,8 +32,11 @@ window.__ModuleLoader__.load({
       const s = snap.state
       let label = '⌁'
       if (snap.status === 'ready' && s !== null) {
-        const cost = typeof s.today.cost === 'number' ? s.today.cost.toFixed(4) : '0'
-        label = `${s.currency || ''} ${cost}${s.budget !== null ? ` · ${s.budget.percent.toFixed(0)}%` : ''}`
+        const costObj = s.today && typeof s.today.cost === 'object' && s.today.cost !== null ? s.today.cost : {}
+        const cost = Object.entries(costObj)
+          .map(([c, v]) => `${c} ${Number(v).toFixed(4)}`)
+          .join(' · ') || '0'
+        label = `${cost}${s.budget !== null ? ` · ${s.budget.percent.toFixed(0)}%` : ''}`
       } else if (snap.status === 'loading') {
         label = '…'
       }

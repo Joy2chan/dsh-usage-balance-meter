@@ -1,7 +1,10 @@
 /**
  * Persistent usage meter ledger: daily aggregates persisted under
- * `$DSH_HOME/storages/usage-meter/ledger.json`, with today / month / total
- * roll-ups computed from the daily map.
+ * `$DSH_HOME/storages/usage-meter/ledger.json` (or a workspace-root copy),
+ * with today / month / total roll-ups computed from the daily map.
+ *
+ * Costs are stored **per currency** (`Record<currency, number>`) so providers
+ * billed in different currencies are NEVER summed together.
  *
  * @module dsh-usage-balance-meter/ledger
  */
@@ -26,11 +29,13 @@ export interface LedgerEntry {
   sessionId?: string
   timestamp: number
   usage: LedgerUsage
-  /** Cost in the configured ledger currency. */
+  /** Currency this call was billed in. */
+  currency: string
+  /** Cost value in {@link currency}. */
   cost: number
 }
 
-/** A rusted-up view of a period's totals. */
+/** A rolled-up view of a period's totals. Costs are keyed by currency. */
 export interface TotalsView {
   calls: number
   input: number
@@ -38,7 +43,7 @@ export interface TotalsView {
   cacheRead: number
   cacheWrite: number
   reasoning: number
-  cost: number
+  cost: Record<string, number>
 }
 
 interface ProviderModelAgg extends TotalsView {}
@@ -59,17 +64,17 @@ const LEDGER_VERSION = 1
 const DEFAULT_HISTORY_DAYS = 180
 
 function zeroTotals(): TotalsView {
-  return { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0 }
+  return { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: {} }
 }
 
-function addTotals(target: TotalsView, u: LedgerUsage, cost: number): void {
+function addTotals(target: TotalsView, u: LedgerUsage, currency: string, cost: number): void {
   target.calls += 1
   target.input += u.input
   target.output += u.output
   target.cacheRead += u.cacheRead
   target.cacheWrite += u.cacheWrite
   target.reasoning += u.reasoning
-  target.cost += cost
+  target.cost[currency] = (target.cost[currency] ?? 0) + cost
 }
 
 /** Local-timezone day key for a timestamp, e.g. `2026-08-18`. */
@@ -86,7 +91,7 @@ export function localMonthKey(ms: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
 }
 
-/** Local-timezone date key for a custom range end (inclusive of the day). */
+/** Move a local day key forward/back by whole days. */
 export function addDays(key: string, days: number): string {
   const [y, m, d] = key.split('-').map(Number)
   const date = new Date(y!, m! - 1, d!)
@@ -155,10 +160,10 @@ export class Ledger {
   account(entry: LedgerEntry): void {
     const key = localDayKey(entry.timestamp)
     const day = dayExists(this.file.daily, key)
-    addTotals(day.totals, entry.usage, entry.cost)
+    addTotals(day.totals, entry.usage, entry.currency, entry.cost)
     const pmKey = `${entry.provider}:${entry.model}`
     const pm = day.byProviderModel[pmKey] ?? zeroTotals()
-    addTotals(pm, entry.usage, entry.cost)
+    addTotals(pm, entry.usage, entry.currency, entry.cost)
     day.byProviderModel[pmKey] = pm
     this.file.updatedAt = Date.now()
     this.scheduleSave()
@@ -187,6 +192,11 @@ export class Ledger {
       if (key >= start && key <= end) sum = sumTotals(sum, day.totals)
     }
     return sum
+  }
+
+  /** Cost for one currency across the whole ledger. */
+  costIn(currency: string): number {
+    return this.totals().all.cost[currency] ?? 0
   }
 
   /** Flush any pending write synchronously (used on disposal). */
@@ -224,6 +234,10 @@ export class Ledger {
 }
 
 function sumTotals(left: TotalsView, right: TotalsView): TotalsView {
+  const cost: Record<string, number> = { ...left.cost }
+  for (const [currency, value] of Object.entries(right.cost)) {
+    cost[currency] = (cost[currency] ?? 0) + value
+  }
   return {
     calls: left.calls + right.calls,
     input: left.input + right.input,
@@ -231,6 +245,6 @@ function sumTotals(left: TotalsView, right: TotalsView): TotalsView {
     cacheRead: left.cacheRead + right.cacheRead,
     cacheWrite: left.cacheWrite + right.cacheWrite,
     reasoning: left.reasoning + right.reasoning,
-    cost: left.cost + right.cost,
+    cost,
   }
 }

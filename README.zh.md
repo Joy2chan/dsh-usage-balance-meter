@@ -49,6 +49,9 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
     #         deepseek-v4-flash:
     #           inputPricePerMillion: 0.50
     #           outputPricePerMillion: 2.00
+    #           offPeak: { inputPricePerMillion: 1.5, outputPricePerMillion: 4.5, cacheReadPricePerMillion: 0.05 }
+    #           peak:    { inputPricePerMillion: 3.0, outputPricePerMillion: 9.0, cacheReadPricePerMillion: 0.10 }
+    #       currency: USD
     # balanceProviders:
     #   - provider: openai
     #     baseURL: https://api.openai.com   # 可选；默认使用插件 baseURL
@@ -97,6 +100,12 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
 ```
 
 只有在组合中存在 `commands` 服务（交互式 UI）时注册；headless 组装里工具仍可用。
+
+## 计价说明
+
+- 账本成本**按币种分开存储**，不同币种不会被加在一起。
+- 顶层 `currency` 用于预算/显示，也是没配币种 provider 的兜底。
+- `peakWindows` 默认是 DeepSeek 的 UTC 峰时段（01:00–04:00、06:00–10:00），可自行修改。
 
 ## 开发
 

@@ -49,6 +49,9 @@ Then restart `dsh web` (plugin rows and bundles are scanned at startup).
     #         deepseek-v4-flash:
     #           inputPricePerMillion: 0.50
     #           outputPricePerMillion: 2.00
+    #           offPeak: { inputPricePerMillion: 1.5, outputPricePerMillion: 4.5, cacheReadPricePerMillion: 0.05 }
+    #           peak:    { inputPricePerMillion: 3.0, outputPricePerMillion: 9.0, cacheReadPricePerMillion: 0.10 }
+    #       currency: USD
     # balanceProviders:
     #   - provider: openai
     #     baseURL: https://api.openai.com   # optional; defaults to plugin baseURL
@@ -99,6 +102,12 @@ active provider:
 
 It is registered only when a `commands` service is composed (interactive UI);
 in headless assemblies the tools still work.
+
+## Pricing notes
+
+- Costs are stored **per currency** in the ledger; different currencies are never summed together.
+- The top-level `currency` is the budget/display currency and the fallback for providers without one.
+- `peakWindows` defaults to DeepSeek's UTC peak windows (01:00–04:00, 06:00–10:00); configure it to change windows.
 
 ## Development
 

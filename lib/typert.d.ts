@@ -33,7 +33,7 @@ export declare const TYPERT: {
                     cacheRead: z.ZodNumber;
                     cacheWrite: z.ZodNumber;
                     reasoning: z.ZodNumber;
-                    cost: z.ZodNumber;
+                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
                 }, z.core.$strip>;
                 month: z.ZodObject<{
                     calls: z.ZodNumber;
@@ -42,7 +42,7 @@ export declare const TYPERT: {
                     cacheRead: z.ZodNumber;
                     cacheWrite: z.ZodNumber;
                     reasoning: z.ZodNumber;
-                    cost: z.ZodNumber;
+                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
                 }, z.core.$strip>;
                 all: z.ZodObject<{
                     calls: z.ZodNumber;
@@ -51,7 +51,7 @@ export declare const TYPERT: {
                     cacheRead: z.ZodNumber;
                     cacheWrite: z.ZodNumber;
                     reasoning: z.ZodNumber;
-                    cost: z.ZodNumber;
+                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
                 }, z.core.$strip>;
                 budget: z.ZodNullable<z.ZodObject<{
                     enabled: z.ZodLiteral<true>;

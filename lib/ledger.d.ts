@@ -1,7 +1,10 @@
 /**
  * Persistent usage meter ledger: daily aggregates persisted under
- * `$DSH_HOME/storages/usage-meter/ledger.json`, with today / month / total
- * roll-ups computed from the daily map.
+ * `$DSH_HOME/storages/usage-meter/ledger.json` (or a workspace-root copy),
+ * with today / month / total roll-ups computed from the daily map.
+ *
+ * Costs are stored **per currency** (`Record<currency, number>`) so providers
+ * billed in different currencies are NEVER summed together.
  *
  * @module dsh-usage-balance-meter/ledger
  */
@@ -20,10 +23,12 @@ export interface LedgerEntry {
     sessionId?: string;
     timestamp: number;
     usage: LedgerUsage;
-    /** Cost in the configured ledger currency. */
+    /** Currency this call was billed in. */
+    currency: string;
+    /** Cost value in {@link currency}. */
     cost: number;
 }
-/** A rusted-up view of a period's totals. */
+/** A rolled-up view of a period's totals. Costs are keyed by currency. */
 export interface TotalsView {
     calls: number;
     input: number;
@@ -31,13 +36,13 @@ export interface TotalsView {
     cacheRead: number;
     cacheWrite: number;
     reasoning: number;
-    cost: number;
+    cost: Record<string, number>;
 }
 /** Local-timezone day key for a timestamp, e.g. `2026-08-18`. */
 export declare function localDayKey(ms: number): string;
 /** Local-timezone month key, e.g. `2026-08`. */
 export declare function localMonthKey(ms: number): string;
-/** Local-timezone date key for a custom range end (inclusive of the day). */
+/** Move a local day key forward/back by whole days. */
 export declare function addDays(key: string, days: number): string;
 /**
  * Open (or create) the ledger file. `historyDays` bounds retention; older
@@ -66,6 +71,8 @@ export declare class Ledger {
     };
     /** Totals over an inclusive local-day range (`YYYY-MM-DD` .. `YYYY-MM-DD`). */
     rangeTotals(start: string, end: string): TotalsView;
+    /** Cost for one currency across the whole ledger. */
+    costIn(currency: string): number;
     /** Flush any pending write synchronously (used on disposal). */
     close(): void;
     private scheduleSave;

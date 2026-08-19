@@ -76,6 +76,10 @@ export interface PriceFields {
   cacheReadPricePerMillion?: number
   /** Price per 1M cache-write tokens. */
   cacheWritePricePerMillion?: number
+  /** Optional peak-tier prices (used when the call lands in a peak UTC window). */
+  peak?: PriceFields
+  /** Optional off-peak-tier prices (used when the call lands outside a peak window). */
+  offPeak?: PriceFields
 }
 
 /** A provider's price table (default tier + exact model tiers). */
@@ -84,6 +88,8 @@ export interface ProviderPriceTable {
   default?: PriceFields
   /** Exact per-model tiers. */
   models?: Record<string, PriceFields>
+  /** Currency this provider is billed in; overrides the global `currency`. */
+  currency?: string
 }
 
 /** Optional per-provider / per-model pricing overrides. */
@@ -96,13 +102,24 @@ export interface PriceTable {
 
 /** Resolved (normalized) per-provider price table. */
 export interface ResolvedProviderPriceTable {
-  default?: PriceConfig
-  models?: Record<string, PriceConfig>
+  default?: ResolvedPriceConfig
+  models?: Record<string, ResolvedPriceConfig>
+  currency?: string
+}
+
+/** Resolved price tier that may include flat fields plus peak/off-peak sub-tiers. */
+export interface ResolvedPriceConfig {
+  inputPricePerMillion?: number
+  outputPricePerMillion?: number
+  cacheReadPricePerMillion?: number
+  cacheWritePricePerMillion?: number
+  offPeak?: PriceConfig
+  peak?: PriceConfig
 }
 
 /** Resolved (normalized) price table used at runtime. */
 export interface ResolvedPriceTable {
-  default?: PriceConfig
+  default?: ResolvedPriceConfig
   providers?: Record<string, ResolvedProviderPriceTable>
 }
 
@@ -159,18 +176,30 @@ export interface Config {
   thresholds?: ThresholdsConfig
   /** Optional per-provider / per-model pricing overrides. */
   prices?: PriceTable
+  /** Optional UTC peak-hour windows used with `peak`/`offPeak` prices. Defaults to DeepSeek peak hours. */
+  peakWindows?: Array<{ start: number; end: number }>
 }
 
-const priceFieldsSchema: z<PriceFields> = z.object({
+const priceFieldsInnerSchema: z<PriceFields> = z.object({
   inputPricePerMillion: z.number().min(0),
   outputPricePerMillion: z.number().min(0),
   cacheReadPricePerMillion: z.number().min(0),
   cacheWritePricePerMillion: z.number().min(0),
 })
 
+const priceFieldsSchema: z<PriceFields> = z.object({
+  inputPricePerMillion: z.number().min(0),
+  outputPricePerMillion: z.number().min(0),
+  cacheReadPricePerMillion: z.number().min(0),
+  cacheWritePricePerMillion: z.number().min(0),
+  peak: priceFieldsInnerSchema,
+  offPeak: priceFieldsInnerSchema,
+})
+
 const providerPriceTableSchema: z<ProviderPriceTable> = z.object({
   default: priceFieldsSchema,
   models: z.dict(priceFieldsSchema),
+  currency: z.string(),
 })
 
 const priceTableSchema: z<PriceTable> = z.object({
@@ -211,6 +240,10 @@ export const Config: z<Config> = z.object({
     errorPercent: z.number().min(0).max(100).default(100),
   }),
   prices: priceTableSchema,
+  peakWindows: z.array(z.object({
+    start: z.number().min(0).max(23),
+    end: z.number().min(0).max(24),
+  })).default([{ start: 1, end: 4 }, { start: 6, end: 10 }]),
 })
 
 interface PriceConfig {
@@ -231,6 +264,7 @@ interface ResolvedConfig {
   readonly budget: ResolvedBudget
   readonly thresholds: ResolvedThresholds
   readonly prices: ResolvedPriceTable
+  readonly peakWindows: ReadonlyArray<{ readonly start: number; readonly end: number }>
 }
 
 interface ResolvedBudget {
@@ -247,14 +281,29 @@ interface ResolvedThresholds {
 }
 
 /** Convert optional price fields into a resolved price config. */
-function normalizePriceFields(fields: PriceFields | undefined): PriceConfig | undefined {
+function normalizePriceFields(fields: PriceFields | undefined): ResolvedPriceConfig | undefined {
   if (fields === undefined
     || (fields.inputPricePerMillion === undefined
       && fields.outputPricePerMillion === undefined
       && fields.cacheReadPricePerMillion === undefined
-      && fields.cacheWritePricePerMillion === undefined)) {
+      && fields.cacheWritePricePerMillion === undefined
+      && fields.peak === undefined
+      && fields.offPeak === undefined)) {
     return undefined
   }
+  const flat = (f: PriceFields | undefined): PriceConfig | undefined => f === undefined ? undefined : normalizeFlat(f)
+  const hasFlat = fields.inputPricePerMillion !== undefined
+    || fields.outputPricePerMillion !== undefined
+    || fields.cacheReadPricePerMillion !== undefined
+    || fields.cacheWritePricePerMillion !== undefined
+  return {
+    ...(hasFlat ? normalizeFlat(fields) : {}),
+    ...fields.peak !== undefined ? { peak: flat(fields.peak) } : {},
+    ...fields.offPeak !== undefined ? { offPeak: flat(fields.offPeak) } : {},
+  }
+}
+
+function normalizeFlat(fields: PriceFields): PriceConfig {
   return {
     inputPricePerMillion: fields.inputPricePerMillion ?? 0,
     outputPricePerMillion: fields.outputPricePerMillion ?? 0,
@@ -264,7 +313,7 @@ function normalizePriceFields(fields: PriceFields | undefined): PriceConfig | un
 }
 
 /** Resolve the price to bill for one provider/model call. */
-function priceFor(provider: string, model: string | undefined, resolved: ResolvedConfig): PriceConfig | undefined {
+function priceFor(provider: string, model: string | undefined, resolved: ResolvedConfig): ResolvedPriceConfig | undefined {
   const providerTable = resolved.prices.providers?.[provider]
   if (providerTable !== undefined) {
     if (model !== undefined && providerTable.models?.[model] !== undefined) {
@@ -273,6 +322,23 @@ function priceFor(provider: string, model: string | undefined, resolved: Resolve
     if (providerTable.default !== undefined) return providerTable.default
   }
   return resolved.prices.default ?? resolved.price
+}
+
+/** Resolve the currency a provider is billed in. */
+function currencyFor(provider: string, resolved: ResolvedConfig): string {
+  return resolved.prices.providers?.[provider]?.currency ?? resolved.currency
+}
+
+/** Default UTC peak windows (hours): DeepSeek peak 01:00-04:00, 06:00-10:00. */
+const DEFAULT_PEAK_WINDOWS: ReadonlyArray<{ readonly start: number; readonly end: number }> = [
+  { start: 1, end: 4 },
+  { start: 6, end: 10 },
+]
+
+/** Whether a UTC timestamp falls in any peak window. */
+function isPeakHour(ms: number, windows: ReadonlyArray<{ readonly start: number; readonly end: number }>): boolean {
+  const hour = new Date(ms).getUTCHours()
+  return windows.some(w => hour >= w.start && hour < w.end)
 }
 
 function resolveConfig(config: Config): ResolvedConfig {
@@ -351,6 +417,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     budget,
     thresholds,
     prices: priceTable,
+    peakWindows: config.peakWindows ?? DEFAULT_PEAK_WINDOWS,
   }
 }
 
@@ -482,6 +549,35 @@ function costOfUsage(usage: SessionUsage, price: PriceConfig | undefined): numbe
   return estimate?.total ?? 0
 }
 
+/** Flat tier to bill for a timestamp under a (possibly peak/off-peak) price. */
+function tierFor(price: ResolvedPriceConfig | undefined, ms: number, windows: ReadonlyArray<{ readonly start: number; readonly end: number }>): PriceConfig | undefined {
+  if (price === undefined) return undefined
+  if (price.peak !== undefined && price.offPeak !== undefined) {
+    return isPeakHour(ms, windows) ? price.peak : price.offPeak
+  }
+  if (price.inputPricePerMillion === undefined
+    && price.outputPricePerMillion === undefined
+    && price.cacheReadPricePerMillion === undefined
+    && price.cacheWritePricePerMillion === undefined) {
+    return undefined
+  }
+  return price as PriceConfig
+}
+
+/** Cost (number) + currency for one usage snapshot at a specific timestamp. */
+function costOfUsageAt(
+  ms: number,
+  usage: SessionUsage,
+  price: ResolvedPriceConfig | undefined,
+  currency: string,
+  windows: ReadonlyArray<{ readonly start: number; readonly end: number }>,
+): { cost: number; currency: string } {
+  const flat = tierFor(price, ms, windows)
+  if (flat === undefined) return { cost: 0, currency }
+  const estimate = estimateCost(usage, flat, currency)
+  return { cost: estimate?.total ?? 0, currency }
+}
+
 /** Budget status view when a budget is enabled, otherwise null. */
 interface BudgetStatusView {
   enabled: true
@@ -507,13 +603,14 @@ function buildLedgerSummary(ledger: Ledger, resolved: ResolvedConfig): LedgerSum
   if (resolved.budget.enabled) {
     let used: number
     const period = resolved.budget.period
-    if (period === 'day') used = totals.today.cost
-    else if (period === 'month') used = totals.month.cost
-    else if (period === 'all') used = totals.all.cost
+    const currency = resolved.currency
+    if (period === 'day') used = totals.today.cost[currency] ?? 0
+    else if (period === 'month') used = totals.month.cost[currency] ?? 0
+    else if (period === 'all') used = totals.all.cost[currency] ?? 0
     else {
       const start = resolved.budget.customStart ?? localDayKey(Date.now())
       const end = resolved.budget.customEnd ?? localDayKey(Date.now())
-      used = ledger.rangeTotals(start, end).cost
+      used = ledger.rangeTotals(start, end).cost[currency] ?? 0
     }
     const amount = resolved.budget.amount
     const percent = amount > 0 ? (used / amount) * 100 : 0
@@ -775,7 +872,7 @@ async function buildProviderOverviews(
   return Promise.all(ctx.llm.listProviders().map(async (info) => {
     const acc = usageByProvider.get(info.id)
     const usage = acc?.usage ?? zeroUsage()
-    const cost = estimateCost(usage, priceFor(info.id, undefined, resolved), resolved.currency)
+    const cost = estimateCost(usage, tierFor(priceFor(info.id, undefined, resolved), Date.now(), resolved.peakWindows), currencyFor(info.id, resolved))
     const adapter = resolved.balanceAdapters.get(info.id)
     let balance: ProviderBalanceInfo | null = null
     let balanceReason: ProviderOverview['balanceReason']
@@ -870,10 +967,14 @@ async function renderCostCommand(
   }
   const summary = buildLedgerSummary(ledger, resolved)
   lines.push('')
+  const costLine = (t: TotalsView): string => {
+    const entries = Object.entries(t.cost)
+    return entries.length === 0 ? `0 ${resolved.currency}` : entries.map(([c, v]) => `${v.toFixed(6)} ${c}`).join(', ')
+  }
   lines.push('Ledger totals:')
-  lines.push(`  today: calls ${summary.today.calls} | cost ${summary.today.cost.toFixed(6)} ${resolved.currency}`)
-  lines.push(`  month: calls ${summary.month.calls} | cost ${summary.month.cost.toFixed(6)} ${resolved.currency}`)
-  lines.push(`  all:   calls ${summary.all.calls} | cost ${summary.all.cost.toFixed(6)} ${resolved.currency}`)
+  lines.push(`  today: calls ${summary.today.calls} | cost ${costLine(summary.today)}`)
+  lines.push(`  month: calls ${summary.month.calls} | cost ${costLine(summary.month)}`)
+  lines.push(`  all:   calls ${summary.all.calls} | cost ${costLine(summary.all)}`)
   if (summary.budget !== null) {
     const b = summary.budget
     lines.push(`  budget (${b.period}): ${b.used.toFixed(6)} / ${b.amount.toFixed(6)} = ${b.percent.toFixed(1)}% (warn >= ${b.warnPercent}%, error >= ${b.errorPercent}%)`)
@@ -969,13 +1070,22 @@ export function apply(ctx: Context, config: Config): void {
               cacheWriteTokens: usage.cacheWriteTokens ?? 0,
               reasoningTokens: usage.reasoningTokens ?? 0,
             }
+            const cfg = resolved()
+            const billed = costOfUsageAt(
+              Date.now(),
+              sessionUsage,
+              priceFor(options.provider, options.model, cfg),
+              currencyFor(options.provider, cfg),
+              cfg.peakWindows,
+            )
             ledger.account({
               provider: options.provider,
               model: options.model,
               ...options.sessionId !== undefined ? { sessionId: String(options.sessionId) } : {},
               timestamp: Date.now(),
               usage: toLedgerUsage(sessionUsage),
-              cost: costOfUsage(sessionUsage, priceFor(options.provider, options.model, resolved())),
+              currency: billed.currency,
+              cost: billed.cost,
             })
           } catch (error) {
             ;(ctx as { logger?: { warn?: (msg: string) => void } }).logger?.warn?.(`[usage-meter] ledger account failed: ${String(error)}`)
@@ -1033,7 +1143,14 @@ export function apply(ctx: Context, config: Config): void {
           cacheWriteTokens: u.cacheWriteTokens ?? 0,
           reasoningTokens: u.reasoningTokens ?? 0,
         }
-        const cost = costOfUsage(sessionUsage, priceFor(event.data.message.source.provider, event.data.message.source.model, resolved()))
+        const cfg = resolved()
+        const cost = costOfUsageAt(
+          Date.now(),
+          sessionUsage,
+          priceFor(event.data.message.source.provider, event.data.message.source.model, cfg),
+          currencyFor(event.data.message.source.provider, cfg),
+          cfg.peakWindows,
+        ).cost
         return {
           input: state.input + sessionUsage.inputTokens,
           output: state.output + sessionUsage.outputTokens,
@@ -1201,7 +1318,7 @@ export function apply(ctx: Context, config: Config): void {
                   cacheRead: { type: 'number', required: true },
                   cacheWrite: { type: 'number', required: true },
                   reasoning: { type: 'number', required: true },
-                  cost: { type: 'number', required: true },
+                  cost: { type: 'object', required: true, additionalProperties: true },
                 },
               },
               month: {
@@ -1214,7 +1331,7 @@ export function apply(ctx: Context, config: Config): void {
                   cacheRead: { type: 'number', required: true },
                   cacheWrite: { type: 'number', required: true },
                   reasoning: { type: 'number', required: true },
-                  cost: { type: 'number', required: true },
+                  cost: { type: 'object', required: true, additionalProperties: true },
                 },
               },
               all: {
@@ -1227,7 +1344,7 @@ export function apply(ctx: Context, config: Config): void {
                   cacheRead: { type: 'number', required: true },
                   cacheWrite: { type: 'number', required: true },
                   reasoning: { type: 'number', required: true },
-                  cost: { type: 'number', required: true },
+                  cost: { type: 'object', required: true, additionalProperties: true },
                 },
               },
             },

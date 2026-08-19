@@ -51,6 +51,10 @@ export interface PriceFields {
     cacheReadPricePerMillion?: number;
     /** Price per 1M cache-write tokens. */
     cacheWritePricePerMillion?: number;
+    /** Optional peak-tier prices (used when the call lands in a peak UTC window). */
+    peak?: PriceFields;
+    /** Optional off-peak-tier prices (used when the call lands outside a peak window). */
+    offPeak?: PriceFields;
 }
 /** A provider's price table (default tier + exact model tiers). */
 export interface ProviderPriceTable {
@@ -58,6 +62,8 @@ export interface ProviderPriceTable {
     default?: PriceFields;
     /** Exact per-model tiers. */
     models?: Record<string, PriceFields>;
+    /** Currency this provider is billed in; overrides the global `currency`. */
+    currency?: string;
 }
 /** Optional per-provider / per-model pricing overrides. */
 export interface PriceTable {
@@ -68,12 +74,22 @@ export interface PriceTable {
 }
 /** Resolved (normalized) per-provider price table. */
 export interface ResolvedProviderPriceTable {
-    default?: PriceConfig;
-    models?: Record<string, PriceConfig>;
+    default?: ResolvedPriceConfig;
+    models?: Record<string, ResolvedPriceConfig>;
+    currency?: string;
+}
+/** Resolved price tier that may include flat fields plus peak/off-peak sub-tiers. */
+export interface ResolvedPriceConfig {
+    inputPricePerMillion?: number;
+    outputPricePerMillion?: number;
+    cacheReadPricePerMillion?: number;
+    cacheWritePricePerMillion?: number;
+    offPeak?: PriceConfig;
+    peak?: PriceConfig;
 }
 /** Resolved (normalized) price table used at runtime. */
 export interface ResolvedPriceTable {
-    default?: PriceConfig;
+    default?: ResolvedPriceConfig;
     providers?: Record<string, ResolvedProviderPriceTable>;
 }
 /** Budget configuration: a periodic cost limit with a warning band. */
@@ -127,6 +143,11 @@ export interface Config {
     thresholds?: ThresholdsConfig;
     /** Optional per-provider / per-model pricing overrides. */
     prices?: PriceTable;
+    /** Optional UTC peak-hour windows used with `peak`/`offPeak` prices. Defaults to DeepSeek peak hours. */
+    peakWindows?: Array<{
+        start: number;
+        end: number;
+    }>;
 }
 export declare const Config: z<Config>;
 interface PriceConfig {

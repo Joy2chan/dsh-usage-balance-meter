@@ -18,7 +18,7 @@ const totalsSchema = z.object({
   cacheRead: num,
   cacheWrite: num,
   reasoning: num,
-  cost: num,
+  cost: z.record(z.string(), num),
 })
 
 const budgetSchema = z.object({
