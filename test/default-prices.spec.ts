@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apply } from '../src/index.js'
+import { apply, Config } from '../src/index.js'
 
 function fakeContext() {
   const tools: Array<{ name: string; execute: (a: unknown, e: unknown) => Promise<unknown> }> = []
@@ -33,5 +33,32 @@ describe('baked default prices', () => {
     const row = res.providers.find(p => p.provider === 'opencode-go')!
     expect(row.cost).not.toBeNull()
     expect(row.cost!.total).toBeGreaterThan(0)
+  })
+
+  it('survives schemastery normalization (empty injected default tiers ignored)', async () => {
+    const raw = {
+      currency: 'USD',
+      prices: {
+        default: { offPeak: { inputPricePerMillion: 0.22, outputPricePerMillion: 0.66, cacheReadPricePerMillion: 0.007 }, peak: { inputPricePerMillion: 0.44, outputPricePerMillion: 1.32, cacheReadPricePerMillion: 0.014 } },
+        providers: {
+          'opencode-go': {
+            currency: 'USD',
+            models: {
+              'deepseek-v4-flash': { offPeak: { inputPricePerMillion: 0.22, outputPricePerMillion: 0.66, cacheReadPricePerMillion: 0.007 }, peak: { inputPricePerMillion: 0.44, outputPricePerMillion: 1.32, cacheReadPricePerMillion: 0.014 } },
+            },
+          },
+        },
+      },
+    }
+    const validated = Config(raw) as unknown as Parameters<typeof apply>[1]
+    const { ctx, tool } = fakeContext()
+    apply(ctx, validated)
+    process.env.DEEPSEEK_API_KEY = 'x'
+    const agent = { session: { events: [
+      { type: 'assistant/message', data: { message: { source: { provider: 'opencode-go', model: 'deepseek-v4-flash' } }, usage: { inputTokens: 1000000, outputTokens: 1000000, cacheReadTokens: 1000000 } } },
+    ] } }
+    const res = await tool('api_overview')!.execute({}, { agent, signal: new AbortController().signal }) as { providers: Array<{ cost: { total: number } | null }> }
+    const row = res.providers.find(p => p.provider === 'opencode-go')!
+    expect(row.cost?.total ?? 0).toBeGreaterThan(0)
   })
 })
