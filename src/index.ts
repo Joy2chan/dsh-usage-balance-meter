@@ -37,6 +37,9 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 export const name = 'usage-meter'
 export const inject = ['tools', 'llm']
 
+/** Diagnostic marker so installed builds can be distinguished at runtime. */
+const BUILD_VERSION = 'dsh-usage-balance-meter@0.1.0 (bb5fc76)'
+
 const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
 const DEFAULT_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_BALANCE_PATH = '/user/balance'
@@ -1015,7 +1018,7 @@ async function renderCostCommand(
   ledger: Ledger,
 ): Promise<CommandResult> {
   const providers = await buildProviderOverviews(ctx, resolved, signal, invocation.agent.session.events)
-  const lines: string[] = []
+  const lines: string[] = [`${BUILD_VERSION}`]
   if (providers.length === 0) {
     lines.push('No active LLM providers found.')
   } else {
