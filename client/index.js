@@ -37,7 +37,7 @@ window.__ModuleLoader__.load({
       ],
     }
 
-    let store = { status: 'loading', state: null }
+    let store = { status: 'loading', state: null, raw: null }
     const listeners = new Set()
     function setStore(next) {
       store = next
@@ -76,6 +76,10 @@ window.__ModuleLoader__.load({
       const details = []
       if (snap.status === 'loading') details.push('loading…')
       else if (snap.status === 'error') details.push('status: error (remote unavailable)')
+      if (!s && snap.raw !== null && snap.raw !== undefined) {
+        const text = JSON.stringify(snap.raw)
+        details.push(`raw: ${text.length > 200 ? text.slice(0, 200) + '…' : text}`)
+      }
       if (s) {
         details.push(`today: ${costParts(s.today.cost).join(', ') || '0'}`)
         details.push(`month: ${costParts(s.month.cost).join(', ') || '0'}`)
@@ -128,10 +132,10 @@ window.__ModuleLoader__.load({
           (result) => {
             console.log('[usage-balance-meter] getState result', result)
             if (result !== null && typeof result === 'object' && 'ok' in result) {
-              setStore({ status: 'ready', state: result.ok === true ? result.value : null })
+              setStore({ status: 'ready', state: result.ok === true ? result.value : null, raw: result })
             } else {
               // Some deployments may return the state directly rather than {ok,value}.
-              setStore({ status: 'ready', state: result })
+              setStore({ status: 'ready', state: result, raw: result })
             }
           },
           (error) => {
