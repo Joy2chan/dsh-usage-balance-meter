@@ -84,9 +84,9 @@ window.__ModuleLoader__.load({
       }
 
       const styles = {
-        root: { display: 'flex', alignItems: 'center', gap: 6, fontSize: wide ? 12 : 11, lineHeight: 1, userSelect: 'none' },
+        root: { position: 'relative', display: 'inline-flex', alignItems: 'center' },
         button: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', borderRadius: 6, border: '1px solid rgba(127,127,127,.25)', background: 'transparent', color: 'inherit', cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
-        panel: { marginTop: 6, padding: 8, borderRadius: 8, border: '1px solid rgba(127,127,127,.2)', background: 'rgba(127,127,127,.08)', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 4, whiteSpace: 'nowrap' },
+        panel: { position: 'fixed', bottom: 44, left: 12, zIndex: 9999, maxWidth: 320, padding: 10, borderRadius: 8, border: '1px solid rgba(127,127,127,.3)', background: '#fff', color: '#111', fontSize: 12, boxShadow: '0 4px 16px rgba(0,0,0,.15)', display: 'flex', flexDirection: 'column', gap: 4, whiteSpace: 'nowrap' },
       }
 
       return React.createElement(
@@ -98,7 +98,13 @@ window.__ModuleLoader__.load({
           compactLabel,
         ),
         open
-          ? React.createElement('div', { style: styles.panel }, details.map((line, i) => React.createElement('div', { key: i }, line)))
+          ? React.createElement(
+              'div',
+              { style: styles.panel },
+              details.length > 0
+                ? details.map((line, i) => React.createElement('div', { key: i }, line))
+                : React.createElement('div', null, 'no data'),
+            )
           : null,
       )
     }
