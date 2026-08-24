@@ -1159,6 +1159,8 @@ async function renderCostCommand(
   if (summary.budget !== null) {
     const b = summary.budget
     lines.push(`  budget (${b.period}): ${b.used.toFixed(6)} / ${b.amount.toFixed(6)} = ${b.percent.toFixed(1)}% (warn >= ${b.warnPercent}%, error >= ${b.errorPercent}%)`)
+    if (b.percent >= b.errorPercent) lines.push('  ⚠️ Over budget: you have exceeded the configured budget.')
+    else if (b.percent >= b.warnPercent) lines.push('  ⚠️ Approaching budget: you are near the configured budget.')
   } else {
     lines.push('  budget: disabled')
   }
@@ -1553,6 +1555,11 @@ export function apply(ctx: Context, config: Config): void {
             required: true,
             items: { type: 'object', additionalProperties: true },
           },
+          warnings: {
+            type: 'array',
+            required: true,
+            items: { type: 'string' },
+          },
         },
       },
       render: (_args, value) => [{
@@ -1564,11 +1571,17 @@ export function apply(ctx: Context, config: Config): void {
       const cfg = resolved()
       const summary = buildLedgerSummary(ledger, cfg)
       const providers = await buildProviderOverviews(ctx, cfg, exec.signal, exec.agent?.session.events ?? [])
+      const warnings: string[] = []
+      if (summary.budget !== null) {
+        if (summary.budget.percent >= summary.budget.errorPercent) warnings.push('Budget exceeded')
+        else if (summary.budget.percent >= summary.budget.warnPercent) warnings.push('Approaching budget')
+      }
       return {
         currency: cfg.currency,
         totals: { today: summary.today, month: summary.month, all: summary.all },
         budget: summary.budget,
         providers: providers.map(p => ({ provider: p.provider, displayName: p.displayName, calls: p.calls, cost: p.cost?.total ?? 0 })),
+        warnings,
       }
     },
     presentCall: () => ({ card: 'generic', title: 'Read cost ledger summary & budget', kind: 'read' }),
