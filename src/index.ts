@@ -1224,6 +1224,7 @@ export function apply(ctx: Context, config: Config): void {
   // Host-side Typert remote consumed by the web client footer.
   ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', {
     async getState(): Promise<CostStateView> {
+      ;(ctx as unknown as { logger?: { info?: (msg: string) => void } }).logger?.info?.('[usage-balance-meter] getState called')
       return buildCostState(ctx, ledger, resolved())
     },
   })
