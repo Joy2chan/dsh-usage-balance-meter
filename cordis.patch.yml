@@ -1,6 +1,11 @@
-# dsh-usage-balance-meter bundle patch: one host (tool) row over the web/headless profile.
-# The row name resolves from the profile's own node_modules where
-# `dsh plugin --profile web add <this package>` installed it.
+# dsh-usage-balance-meter bundle patch.
+# - Inserts the host tool plugin row.
+# - Tells typert-loader to explicitly mount this package's host Typert
+#   manifest so the web client can call remote.usageMeter.*.
 - insert:
     - id: usage-meter
       name: dsh-usage-balance-meter
+- id: typert-loader
+  config:
+    packages:
+      - dsh-usage-balance-meter
