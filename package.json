@@ -98,5 +98,10 @@
     "@types/node": "^22.20.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Joy2chan/dsh-usage-balance-meter.git"
+  },
+  "homepage": "https://github.com/Joy2chan/dsh-usage-balance-meter#readme"
 }
