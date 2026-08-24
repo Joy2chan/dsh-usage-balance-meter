@@ -3,7 +3,7 @@
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件：注册两个模型可调用的工具：
 
 - `deepseek_api_status` — 读取当前接入的 DeepSeek API 账户余额（`GET /user/balance`）、当前会话的提供方 token 用量、可选的网关账户级用量响应、可选的会话费用估算。
-- `api_overview` — 列出所有 active LLM provider（`ctx.llm.listProviders()`），给出每个 provider 的调用次数、token 用量、所用模型、费用估算和余额状态（DeepSeek 官方开箱即用；其他 provider 在配置余额适配器前标记为 `unsupported`）。
+- `api_overview` — 列出所有 active LLM provider（`ctx.llm.listProviders()`），给出每个 provider 的调用次数、token 用量、所用模型、费用估算和余额状态。DeepSeek 官方开箱即用；`opencode-go` 会从官方接口读取滚动/本周/本月额度（需有 key）；其他 provider 可配置任意 HTTP 余额适配器。
 
 目前是纯宿主插件（还没有客户端 bundle），只依赖 `ctx.tools`，以及可选的 `ctx.credentials`。
 
@@ -32,6 +32,7 @@ dsh plugin --profile web add link:/绝对路径/dsh-usage-balance-meter
     # cacheReadPricePerMillion: 0.25
     # cacheWritePricePerMillion: 0.25
     # currency: USD
+    # opencodeGoApiKey: YOUR_GO_KEY  # 可选；省略时自动发现 OPENCODE_GO_API_KEY / auth.json
     # 可选：非官方 provider 的 HTTP 余额适配器（网关 / LiteLLM 等）
     # 按 provider / 按模型分别配价（未命中时回退到上面的全局价）：
     # prices:

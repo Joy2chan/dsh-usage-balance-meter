@@ -3,7 +3,7 @@
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that registers two model-facing tools:
 
 - `deepseek_api_status` — reads the currently connected DeepSeek API account balance (`GET /user/balance`), the current session's provider-reported token usage, an optional gateway account-usage response, and an optional session cost estimate.
-- `api_overview` — lists every active LLM provider (`ctx.llm.listProviders()`) with per-provider call counts, token usage, models used, cost estimate, and balance status (DeepSeek official out of the box; other providers marked `unsupported` until a balance adapter is configured).
+- `api_overview` — lists every active LLM provider (`ctx.llm.listProviders()`) with per-provider call counts, token usage, models used, cost estimate, and balance status. DeepSeek official is queried out of the box; `opencode-go` shows its rolling/weekly/monthly quota from the official endpoint when a key is available; other providers can use any configured HTTP balance adapter.
 
 This is a host-only plugin — no client bundle yet. It depends only on `ctx.tools` and, optionally, `ctx.credentials`.
 
@@ -32,6 +32,7 @@ Then restart `dsh web` (plugin rows and bundles are scanned at startup).
     # cacheReadPricePerMillion: 0.25
     # cacheWritePricePerMillion: 0.25
     # currency: USD
+    # opencodeGoApiKey: YOUR_GO_KEY  # optional; omitted = auto-discover
     # Optional per-provider HTTP balance adapters (for gateways / non-official providers):
     # Per-provider / per-model prices (fall back to the global values above):
     # prices:

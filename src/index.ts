@@ -16,6 +16,7 @@
  * @module dsh-usage-balance-meter
  */
 
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -190,6 +191,8 @@ export interface Config {
   prices?: PriceTable
   /** Optional UTC peak-hour windows used with `peak`/`offPeak` prices. Defaults to DeepSeek peak hours. */
   peakWindows?: Array<{ start: number; end: number }>
+  /** Optional explicit OpenCode Go API key; when omitted the key is auto-discovered from credentials/env/auth.json. */
+  opencodeGoApiKey?: string
 }
 
 const priceFieldsInnerSchema: z<PriceFields> = z.object({
@@ -256,6 +259,7 @@ export const Config: z<Config> = z.object({
     start: z.number().min(0).max(23),
     end: z.number().min(0).max(24),
   })).default([{ start: 1, end: 4 }, { start: 6, end: 10 }]),
+  opencodeGoApiKey: z.string().role('secret'),
 })
 
 interface PriceConfig {
@@ -277,6 +281,7 @@ interface ResolvedConfig {
   readonly thresholds: ResolvedThresholds
   readonly prices: ResolvedPriceTable
   readonly peakWindows: ReadonlyArray<{ readonly start: number; readonly end: number }>
+  readonly opencodeGoApiKey?: string
 }
 
 interface ResolvedBudget {
@@ -496,6 +501,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     thresholds,
     prices: priceTable,
     peakWindows: config.peakWindows ?? DEFAULT_PEAK_WINDOWS,
+    ...config.opencodeGoApiKey !== undefined ? { opencodeGoApiKey: config.opencodeGoApiKey } : {},
   }
 }
 
@@ -800,7 +806,7 @@ function extractAtPath(value: unknown, path: string): unknown {
 
 /** Balance detail attached to one provider in `api_overview`. */
 interface ProviderBalanceInfo {
-  adapter: 'official' | 'custom'
+  adapter: 'official' | 'custom' | 'opencode-go'
   status: 'ok'
   value?: number | string
   currency?: string
@@ -887,7 +893,7 @@ const PROVIDER_OVERVIEW_VALUE_SCHEMA = {
                 type: 'object',
                 additionalProperties: false,
                 properties: {
-                  adapter: { type: 'string', required: true, enum: ['official', 'custom'] },
+                  adapter: { type: 'string', required: true, enum: ['official', 'custom', 'opencode-go'] },
                   status: { type: 'string', required: true, enum: ['ok'] },
                   value: {
                     oneOf: [
@@ -955,7 +961,23 @@ async function buildProviderOverviews(
     let balance: ProviderBalanceInfo | null = null
     let balanceReason: ProviderOverview['balanceReason']
 
-    if (apiKey === undefined) {
+    if (info.id === 'opencode-go' && adapter === undefined) {
+      // OpenCode Go has its own key/endpoint, independent of the DeepSeek key.
+      try {
+        const quota = await queryOpenCodeGoQuota(ctx, resolved, signal)
+        balance = {
+          adapter: 'opencode-go',
+          status: 'ok',
+          ...(quota.rolling !== undefined ? { value: quota.rolling.percent } : {}),
+          currency: 'USD',
+          raw: quota as unknown as JsonValue,
+        }
+        balanceReason = 'ok'
+      } catch {
+        balance = null
+        balanceReason = 'error'
+      }
+    } else if (apiKey === undefined) {
       balanceReason = info.id === OFFICIAL_PROVIDER ? 'no-key' : (adapter === undefined ? 'unsupported' : 'no-key')
     } else if (info.id === OFFICIAL_PROVIDER && adapter === undefined) {
       try {
@@ -997,6 +1019,82 @@ async function buildProviderOverviews(
   }))
 }
 
+/** OpenCode Go quota endpoint (official). */
+const OPENCODE_GO_QUOTA_URL = 'https://opencode.ai/zen/go/v1/usage'
+
+/** One usage window returned by OpenCode Go. */
+interface GoQuotaWindow {
+  percent: number
+  resetsAt: string
+}
+
+/** Resolve the OpenCode Go API key: explicit config → credentials → env → auth.json. */
+async function resolveOpenCodeGoKey(ctx: Context, resolved: ResolvedConfig): Promise<string | undefined> {
+  const explicit = resolved.opencodeGoApiKey?.trim()
+  if (explicit !== undefined && explicit.length > 0) return explicit
+  const credentials = ctx.get('credentials')
+  if (credentials !== undefined) {
+    try {
+      const hit = await credentials.resolve(credentialRef('OPENCODE_GO_API_KEY'))
+      if (hit !== undefined && hit.value.length > 0) return hit.value
+    } catch {
+      // fall through to env
+    }
+  }
+  for (const name of ['OPENCODE_GO_API_KEY', 'OPENCODE_API_KEY']) {
+    const value = process.env[name]?.trim()
+    if (value !== undefined && value.length > 0) return value
+  }
+  for (const file of [
+    `${process.env.HOME ?? ''}/.local/share/opencode/auth.json`,
+    `${process.env.HOME ?? ''}/.config/opencode/auth.json`,
+  ]) {
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8'))
+      const key = data?.['opencode-go']?.key
+      if (typeof key === 'string' && key.length > 0) return key
+    } catch {
+      // not found / unreadable
+    }
+  }
+  return undefined
+}
+
+function normalizeGoWindow(raw: unknown): GoQuotaWindow | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const r = raw as Record<string, unknown>
+  const percent = Number(r.percent)
+  if (!Number.isFinite(percent)) return undefined
+  return { percent, resetsAt: typeof r.resetsAt === 'string' ? r.resetsAt : '' }
+}
+
+/** Query OpenCode Go rolling/weekly/monthly usage percentages. */
+async function queryOpenCodeGoQuota(ctx: Context, resolved: ResolvedConfig, signal: AbortSignal): Promise<{
+  rolling?: GoQuotaWindow
+  weekly?: GoQuotaWindow
+  monthly?: GoQuotaWindow
+}> {
+  const key = await resolveOpenCodeGoKey(ctx, resolved)
+  if (key === undefined) throw new Error('OpenCode Go API key not found')
+  const response = await fetch(OPENCODE_GO_QUOTA_URL, {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      // Browser UA avoids Cloudflare error 1010.
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+    },
+    signal,
+  })
+  if (!response.ok) throw new Error(`OpenCode Go quota HTTP ${response.status}`)
+  const data = await response.json() as { usage?: Record<string, unknown> }
+  const usage = data.usage
+  if (usage === null || typeof usage !== 'object') throw new Error('OpenCode Go usage missing')
+  return {
+    ...normalizeGoWindow(usage.rolling) !== undefined ? { rolling: normalizeGoWindow(usage.rolling) } : {},
+    ...normalizeGoWindow(usage.weekly) !== undefined ? { weekly: normalizeGoWindow(usage.weekly) } : {},
+    ...normalizeGoWindow(usage.monthly) !== undefined ? { monthly: normalizeGoWindow(usage.monthly) } : {},
+  }
+}
+
 /** Render one provider's balance line for the `/cost` command. */
 function renderBalanceLine(provider: ProviderOverview): string {
   const b = provider.balance
@@ -1007,6 +1105,11 @@ function renderBalanceLine(provider: ProviderOverview): string {
       case 'no-balance-adapter': return 'balance: no adapter configured'
       default: return 'balance: not supported'
     }
+  }
+  if (b.adapter === 'opencode-go') {
+    const raw = b.raw as { rolling?: { percent?: number }; weekly?: { percent?: number }; monthly?: { percent?: number } } | undefined
+    const fmt = (v: number | undefined): string => v === undefined ? '?' : `${v.toFixed(0)}%`
+    return `opencode-go quota: rolling ${fmt(raw?.rolling?.percent)} · weekly ${fmt(raw?.weekly?.percent)} · monthly ${fmt(raw?.monthly?.percent)}`
   }
   if (b.adapter === 'official' && b.currencies !== undefined) {
     const detail = b.currencies

@@ -271,3 +271,33 @@ describe('per-provider pricing', () => {
     expect(byId.get('deepseek-official')!.cost!.total).toBeCloseTo(30)
   })
 })
+
+describe('OpenCode Go quota', () => {
+  it('shows quota for opencode-go instead of unsupported', async () => {
+    const { ctx, tool } = fakeContext([
+      { id: 'opencode-go', name: 'OpenCode Go' },
+    ])
+    apply(ctx, { apiKeyEnv: 'DEEPSEEK_API_KEY' })
+    process.env.OPENCODE_GO_API_KEY = 'go-key'
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (String(url).includes('/zen/go/v1/usage')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ usage: { rolling: { percent: 12.5, resetsAt: '2026-08-24T18:00:00Z' }, weekly: { percent: 30, resetsAt: '2026-08-31' }, monthly: { percent: 45, resetsAt: '2026-09-01' } } }),
+          text: async () => '',
+        }
+      }
+      throw new Error(`unexpected ${url}`)
+    })
+    const agent = { session: { events: [] } }
+    const res = await tool('api_overview')!.execute({}, { agent, signal: new AbortController().signal }) as {
+      providers: Array<{ provider: string; balance: { adapter: string; status: string; value?: number; raw?: { rolling?: { percent?: number } } } | null; balanceReason: string }>
+    }
+    const row = res.providers.find(p => p.provider === 'opencode-go')!
+    expect(row.balanceReason).toBe('ok')
+    expect(row.balance?.adapter).toBe('opencode-go')
+    expect(row.balance?.value).toBe(12.5)
+    expect(row.balance?.raw?.rolling?.percent).toBe(12.5)
+  })
+})

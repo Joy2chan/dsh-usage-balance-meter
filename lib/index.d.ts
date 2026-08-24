@@ -148,6 +148,8 @@ export interface Config {
         start: number;
         end: number;
     }>;
+    /** Optional explicit OpenCode Go API key; when omitted the key is auto-discovered from credentials/env/auth.json. */
+    opencodeGoApiKey?: string;
 }
 export declare const Config: z<Config>;
 interface PriceConfig {
