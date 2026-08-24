@@ -67,9 +67,11 @@ window.__ModuleLoader__.load({
       const s = snap.state
       const todayCost = s && s.today && s.today.cost ? costParts(s.today.cost).join(' · ') : ''
       const budgetText = s && s.budget ? ` ${s.budget.percent.toFixed(0)}%` : ''
-      const compactLabel = wide
+      let compactLabel = wide
         ? (todayCost ? `⌁ ${todayCost}${budgetText}` : '⌁ cost')
         : '⌁'
+      if (snap.status === 'error') compactLabel = wide ? '⌁ err' : '⌁!'
+      else if (snap.status === 'loading') compactLabel = wide ? '⌁ …' : '⌁'
 
       const details = []
       if (s) {
@@ -107,15 +109,28 @@ window.__ModuleLoader__.load({
         try { await remoteHost.$mount(CONTRIBUTION) } catch { /* ignore */ }
       }
       const remote = ctx.get('remote.usageMeter')
-      if (remote !== undefined && typeof remote.getState === 'function') {
+      if (remote === undefined) {
+        console.warn('[usage-balance-meter] remote.usageMeter is undefined')
+        setStore({ status: 'error', state: null })
+      } else if (typeof remote.getState !== 'function') {
+        console.warn('[usage-balance-meter] remote.usageMeter has no getState', remote)
+        setStore({ status: 'error', state: null })
+      } else {
         remote.getState().then(
           (result) => {
-            setStore({ status: 'ready', state: result !== null && typeof result === 'object' && result.ok === true ? result.value : null })
+            console.log('[usage-balance-meter] getState result', result)
+            if (result !== null && typeof result === 'object' && 'ok' in result) {
+              setStore({ status: 'ready', state: result.ok === true ? result.value : null })
+            } else {
+              // Some deployments may return the state directly rather than {ok,value}.
+              setStore({ status: 'ready', state: result })
+            }
           },
-          () => { setStore({ status: 'error', state: null }) },
+          (error) => {
+            console.warn('[usage-balance-meter] getState failed', error)
+            setStore({ status: 'error', state: null })
+          },
         )
-      } else {
-        setStore({ status: 'error', state: null })
       }
       if (slots === undefined || typeof slots.inject !== 'function') return
       slots.inject('sidebar.footer.action', () => slots.register(
