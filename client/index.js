@@ -16,6 +16,27 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'remote']
     const name = 'usage-balance-meter-client'
 
+    // Minimal Typert client contribution matching the host ./typert manifest.
+    // Mounting it makes ctx.get('remote.usageMeter') available on the client.
+    const CONTRIBUTION = {
+      package: 'dsh-usage-balance-meter',
+      descriptors: [
+        {
+          id: 'dsh-usage-balance-meter#usageMeter/getState',
+          service: 'usageMeter',
+          namespace: 'usageMeter',
+          method: 'getState',
+          invocation: { kind: 'direct' },
+          parameters: [],
+          result: {
+            mode: 'strict',
+            typeSymbol: 'dsh-usage-balance-meter#CostState',
+            schema: { parse: (v) => v },
+          },
+        },
+      ],
+    }
+
     let store = { status: 'loading', state: null }
     const listeners = new Set()
     function setStore(next) {
@@ -78,8 +99,13 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function apply(ctx) {
+    async function apply(ctx) {
       const slots = ctx.get('slots')
+      // Register the client Typert contribution so the remote is available.
+      const remoteHost = ctx.remote
+      if (remoteHost !== undefined && typeof remoteHost.$mount === 'function') {
+        try { await remoteHost.$mount(CONTRIBUTION) } catch { /* ignore */ }
+      }
       const remote = ctx.get('remote.usageMeter')
       if (remote !== undefined && typeof remote.getState === 'function') {
         remote.getState().then(
