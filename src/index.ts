@@ -25,14 +25,23 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { JsonValue, SessionEvent } from '@deepseek-ai/dsh-session'
 import { z as zod } from 'zod'
-import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { Ledger, localDayKey, type LedgerUsage, type TotalsView } from './ledger.js'
 import type {} from '@deepseek-ai/dsh-session-projection'
+
+/** Minimal structural command types (avoids a runtime dep on @deepseek-ai/dsh-commands). */
+interface CommandInvocation {
+  agent: { session: { events: readonly import('@deepseek-ai/dsh-session').SessionEvent[] } }
+  rawInput: string
+  signal: AbortSignal
+}
+
+type CommandResult =
+  | { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }
+  | { readonly kind: 'error'; readonly text: string }
 
 export const name = 'usage-meter'
 export const inject = ['tools', 'llm']
@@ -1462,11 +1471,11 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: () => ({ card: 'generic', title: 'Read cost ledger summary & budget', kind: 'read' }),
   }))
 
-  ctx.inject(['commands'], (commandCtx) => {
+  ;(ctx as unknown as { inject?: (services: string[], cb: (c: unknown) => void) => void }).inject?.(['commands'], (commandCtx: any) => {
     commandCtx.commands.register({
       name: 'cost',
       description: 'show current session usage, cost, balance, and ledger totals by provider',
-      handler: invocation => renderCostCommand(ctx, resolved(), invocation, invocation.signal, ledger),
+      handler: (invocation: any) => renderCostCommand(ctx, resolved(), invocation, invocation.signal, ledger),
     })
   })
 }
