@@ -74,6 +74,8 @@ window.__ModuleLoader__.load({
       else if (snap.status === 'loading') compactLabel = wide ? '⌁ …' : '⌁'
 
       const details = []
+      if (snap.status === 'loading') details.push('loading…')
+      else if (snap.status === 'error') details.push('status: error (remote unavailable)')
       if (s) {
         details.push(`today: ${costParts(s.today.cost).join(', ') || '0'}`)
         details.push(`month: ${costParts(s.month.cost).join(', ') || '0'}`)
