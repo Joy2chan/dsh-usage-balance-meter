@@ -32,6 +32,7 @@ import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { Ledger, localDayKey, type LedgerUsage, type TotalsView } from './ledger.js'
 import type {} from '@deepseek-ai/dsh-session-projection'
+import { bindTypertRemote } from '@deepseek-ai/dsh-typert-protocol'
 
 /** Minimal structural command types (avoids a runtime dep on @deepseek-ai/dsh-commands). */
 interface CommandInvocation {
@@ -1221,13 +1222,17 @@ export function apply(ctx: Context, config: Config): void {
   }
   ctx.effect(() => () => ledger.close())
 
-  // Host-side Typert remote consumed by the web client footer.
-  ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', {
+  // Host-side Typert remote consumed by the web client footer. The typert
+  // gateway resolves ctx.usageMeter and demands a visible typertRemote binding
+  // on the service object before dispatching usageMeter/getState.
+  const usageMeter = {
     async getState(): Promise<CostStateView> {
       ;(ctx as unknown as { logger?: { info?: (msg: string) => void } }).logger?.info?.('[usage-balance-meter] getState called')
       return buildCostState(ctx, ledger, resolved())
     },
-  })
+  }
+  Object.assign(usageMeter, { typertRemote: bindTypertRemote(usageMeter, 'usageMeter') })
+  ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', usageMeter)
 
   // Capture every model call's usage from the llm/stream waterfall and account
   // it into the persistent ledger (today / month / all totals).
