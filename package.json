@@ -63,6 +63,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:client": "node -e \"require('node:fs').cpSync('client/index.js','lib/client.js')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
