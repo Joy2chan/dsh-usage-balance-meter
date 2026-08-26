@@ -12,6 +12,23 @@ export declare const TYPERT: {
     package: string;
     face: "host";
     schemas: never[];
+    model: {
+        services: {
+            key: string;
+            exportName: string;
+            description: string;
+            tags: never[];
+            members: {
+                kind: "method";
+                name: string;
+                signature: string;
+                summary: string;
+            }[];
+            types: never[];
+        }[];
+        events: never[];
+        objects: never[];
+    };
     invocations: {
         id: string;
         service: string;

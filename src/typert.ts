@@ -50,6 +50,27 @@ export const TYPERT = {
   package: 'dsh-usage-balance-meter',
   face: 'host' as const,
   schemas: [],
+  model: {
+    services: [
+      {
+        key: 'usageMeter',
+        exportName: 'usageMeter',
+        description: 'Host-side usage meter service consumed by the web client footer.',
+        tags: [],
+        members: [
+          {
+            kind: 'method' as const,
+            name: 'getState',
+            signature: 'getState(): Promise<CostState>',
+            summary: 'Return the current cost state (today/month/all totals and budget).',
+          },
+        ],
+        types: [],
+      },
+    ],
+    events: [],
+    objects: [],
+  },
   invocations: [
     {
       id: 'dsh-usage-balance-meter#usageMeter/getState',
