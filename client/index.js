@@ -91,6 +91,14 @@ window.__ModuleLoader__.load({
       return parts[0]
     }
 
+    /** Compact token formatting: 3.2M / 840 / 4.1k. */
+    function fmtTokens(n) {
+      if (typeof n !== 'number' || !Number.isFinite(n)) return '0'
+      if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+      if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}k`
+      return String(n)
+    }
+
     const POPUP_MAX_WIDTH = 300
 
     function CostFooter({ wide }) {
@@ -183,9 +191,13 @@ window.__ModuleLoader__.load({
         details.push({ label: 'raw', value: text.length > 400 ? text.slice(0, 400) + '…' : text })
       }
       if (s) {
-        details.push({ label: 'today', value: costParts(s.today.cost).join(', ') || '0' })
-        details.push({ label: 'month', value: costParts(s.month.cost).join(', ') || '0' })
-        details.push({ label: 'all', value: costParts(s.all.cost).join(', ') || '0' })
+        const period = (label, t) => ({
+          label,
+          value: `${costParts(t.cost).join(', ') || '0'} · ${fmtTokens(t.input)} in / ${fmtTokens(t.output)} out / ${fmtTokens(t.cacheRead)} cache · ${t.calls} calls`,
+        })
+        details.push(period('today', s.today))
+        details.push(period('month', s.month))
+        details.push(period('all', s.all))
         if (s.budget) details.push({
           label: 'budget',
           value: `${s.budget.percent.toFixed(1)}% (${s.budget.used.toFixed(4)} / ${s.budget.amount.toFixed(4)})`,
