@@ -136,3 +136,5 @@ npm test        # vitest
 - ~~持久化账本（今日 / 本月 / 累计）~~（已实现：`usage_summary` + `/cost`）
 - ~~轻量设置持久化（价格、预算、阈值）~~（已实现）
 - ~~最小化 Web UI footer~~（已在 `client/` 实现：紧凑按钮、rail 点击展开侧栏、脉冲图标）
+
+- ~~Web 设置节：可编辑 per-provider 价格~~（已实现：provider/model 价格与管理）

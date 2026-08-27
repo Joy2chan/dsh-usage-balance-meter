@@ -141,3 +141,5 @@ npm test        # vitest
 - ~~Persistent ledger (today / month / cumulative)~~ (done: `usage_summary` + `/cost`)
 - ~~Lightweight settings persistence (pricing, budget, thresholds)~~ (done)
 - ~~Minimal Web UI footer~~ (shipped under `client/`: compact button, rail click expands the sidebar, pulse icon)
+
+- ~~Web settings: editable per-provider pricing~~ (implemented: provider/model price fields with add/remove)
