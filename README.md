@@ -129,6 +129,7 @@ the defaults.
 ```sh
 npm install
 npm run build   # tsc -> lib/
+npm run build:client   # client/index.js -> lib/client.js (web footer)
 npm test        # vitest
 ```
 
@@ -139,4 +140,4 @@ npm test        # vitest
 - ~~`/cost` slash command~~ (done)
 - ~~Persistent ledger (today / month / cumulative)~~ (done: `usage_summary` + `/cost`)
 - ~~Lightweight settings persistence (pricing, budget, thresholds)~~ (done)
-- ~~Minimal Web UI footer~~ (scaffold shipped under `client/`, experimental — verify against a live Harness web build)
+- ~~Minimal Web UI footer~~ (shipped under `client/`: compact button, rail click expands the sidebar, pulse icon)

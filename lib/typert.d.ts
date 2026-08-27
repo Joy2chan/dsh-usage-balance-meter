@@ -6,81 +6,66 @@
  *
  * @module dsh-usage-balance-meter/typert
  */
-import { z } from 'zod';
-/** The full Typert manifest for this package. */
-export declare const TYPERT: {
-    package: string;
-    face: "host";
-    schemas: never[];
-    model: {
-        services: {
-            key: string;
-            exportName: string;
-            description: string;
-            tags: never[];
-            members: {
-                kind: "method";
-                name: string;
-                signature: string;
-                summary: string;
-            }[];
-            types: never[];
-        }[];
-        events: never[];
-        objects: never[];
-    };
-    invocations: {
-        id: string;
-        service: string;
-        namespace: string;
-        method: string;
-        invocation: {
-            kind: "direct";
-        };
-        parameters: never[];
-        result: {
-            mode: "strict";
-            typeSymbol: string;
-            schema: z.ZodObject<{
-                currency: z.ZodString;
-                today: z.ZodObject<{
-                    calls: z.ZodNumber;
-                    input: z.ZodNumber;
-                    output: z.ZodNumber;
-                    cacheRead: z.ZodNumber;
-                    cacheWrite: z.ZodNumber;
-                    reasoning: z.ZodNumber;
-                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
-                }, z.core.$strip>;
-                month: z.ZodObject<{
-                    calls: z.ZodNumber;
-                    input: z.ZodNumber;
-                    output: z.ZodNumber;
-                    cacheRead: z.ZodNumber;
-                    cacheWrite: z.ZodNumber;
-                    reasoning: z.ZodNumber;
-                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
-                }, z.core.$strip>;
-                all: z.ZodObject<{
-                    calls: z.ZodNumber;
-                    input: z.ZodNumber;
-                    output: z.ZodNumber;
-                    cacheRead: z.ZodNumber;
-                    cacheWrite: z.ZodNumber;
-                    reasoning: z.ZodNumber;
-                    cost: z.ZodRecord<z.ZodString, z.ZodNumber>;
-                }, z.core.$strip>;
-                budget: z.ZodNullable<z.ZodObject<{
-                    enabled: z.ZodLiteral<true>;
-                    period: z.ZodString;
-                    used: z.ZodNumber;
-                    amount: z.ZodNumber;
-                    percent: z.ZodNumber;
-                    warnPercent: z.ZodNumber;
-                    errorPercent: z.ZodNumber;
-                }, z.core.$strip>>;
-            }, z.core.$strip>;
-        };
+/**
+ * Structural contract enforced by `@deepseek-ai/dsh-typert-loader`'s
+ * `validateTypertManifest` (packages/typert/loader/src/index.ts in the
+ * harness). `TYPERT.model` is REQUIRED — omitting it fails the boot with
+ * "`<pkg>` TYPERT.model must be an object". Annotating the manifest with this
+ * type moves that failure from runtime to compile time. Keep this in sync if
+ * the loader's checks change.
+ */
+interface TypertServiceMember {
+    readonly kind: 'property' | 'method' | 'getter' | 'setter' | 'call' | 'construct' | 'index';
+    readonly name: string;
+    readonly signature: string;
+    readonly summary?: string;
+}
+interface TypertServiceModel {
+    readonly key: string;
+    readonly exportName: string;
+    readonly description?: string;
+    readonly tags: readonly unknown[];
+    readonly members: readonly TypertServiceMember[];
+    readonly types: readonly {
+        readonly name: string;
+        readonly declaration: string;
     }[];
-};
+}
+interface TypertHostModel {
+    readonly services: readonly TypertServiceModel[];
+    readonly events: readonly {
+        readonly name: string;
+        readonly signature: string;
+        readonly mode?: string;
+    }[];
+    readonly objects: readonly {
+        readonly name: string;
+        readonly exportName: string;
+        readonly members: readonly TypertServiceMember[];
+    }[];
+}
+interface TypertInvocationDescriptor {
+    readonly id: string;
+    readonly service: string;
+    readonly namespace: string;
+    readonly method: string;
+    readonly invocation: {
+        readonly kind: 'direct' | 'context';
+    };
+    readonly parameters: readonly unknown[];
+    readonly result: {
+        readonly mode: 'strict';
+        readonly typeSymbol: string;
+        readonly schema: unknown;
+    };
+}
+interface TypertHostManifest {
+    readonly package: string;
+    readonly face: 'host';
+    readonly schemas: readonly unknown[];
+    readonly model: TypertHostModel;
+    readonly invocations: readonly TypertInvocationDescriptor[];
+}
+/** The full Typert manifest for this package. */
+export declare const TYPERT: TypertHostManifest;
 export default TYPERT;

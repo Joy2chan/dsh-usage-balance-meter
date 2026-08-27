@@ -17,6 +17,8 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type CredentialRef } from '@deepseek-ai/dsh-credentials';
+import { Ledger, type TotalsView } from './ledger.js';
 export declare const name = "usage-meter";
 export declare const inject: string[];
 /**
@@ -158,6 +160,52 @@ interface PriceConfig {
     readonly cacheReadPricePerMillion: number;
     readonly cacheWritePricePerMillion: number;
 }
+interface ResolvedConfig {
+    readonly apiKeyEnv: CredentialRef;
+    readonly baseURL: string;
+    readonly balancePath: string;
+    readonly usagePath?: string;
+    readonly price?: PriceConfig;
+    readonly currency: string;
+    readonly balanceAdapters: ReadonlyMap<string, BalanceAdapterConfig>;
+    readonly budget: ResolvedBudget;
+    readonly thresholds: ResolvedThresholds;
+    readonly prices: ResolvedPriceTable;
+    readonly peakWindows: ReadonlyArray<{
+        readonly start: number;
+        readonly end: number;
+    }>;
+    readonly opencodeGoApiKey?: string;
+}
+interface ResolvedBudget {
+    readonly enabled: boolean;
+    readonly amount: number;
+    readonly period: BudgetConfig['period'];
+    readonly customStart?: string;
+    readonly customEnd?: string;
+}
+interface ResolvedThresholds {
+    readonly warnPercent: number;
+    readonly errorPercent: number;
+}
+/** Budget status view when a budget is enabled, otherwise null. */
+interface BudgetStatusView {
+    enabled: true;
+    period: string;
+    used: number;
+    amount: number;
+    percent: number;
+    warnPercent: number;
+    errorPercent: number;
+}
+/** Wire state the web client footer reads through `remote.usageMeter.getState()`. */
+interface CostStateView {
+    currency: string;
+    today: TotalsView;
+    month: TotalsView;
+    all: TotalsView;
+    budget: BudgetStatusView | null;
+}
 /** Register the plugin's two model-facing tools. */
 /** Per-session cost/token projection surfaced to the web client footer. */
 interface CostUsageProjection {
@@ -174,5 +222,15 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
     }
 }
 /** Register the plugin's tools, persistent ledger, and slash command. */
+/**
+ * Build the host-side usageMeter Typert remote service. The returned object
+ * carries a frozen typertRemote binding so the gateway can dispatch
+ * usageMeter/getState to it. Kept as a small exported factory so apply()
+ * and the regression tests share one construction path.
+ */
+export declare function bindUsageMeter(ctx: Context, ledger: Ledger, resolved: () => ResolvedConfig): {
+    getState(): Promise<CostStateView>;
+    typertRemote: unknown;
+};
 export declare function apply(ctx: Context, config: Config): void;
 export {};

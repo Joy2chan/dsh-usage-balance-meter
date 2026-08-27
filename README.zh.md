@@ -135,4 +135,4 @@ npm test        # vitest
 - ~~`/cost` 斜杠命令~~（已实现）
 - ~~持久化账本（今日 / 本月 / 累计）~~（已实现：`usage_summary` + `/cost`）
 - ~~轻量设置持久化（价格、预算、阈值）~~（已实现）
-- ~~最小化 Web UI footer~~（已在 `client/` 放下脚手架，实验性——需在真实 Harness Web 构建中验证）
+- ~~最小化 Web UI footer~~（已在 `client/` 实现：紧凑按钮、rail 点击展开侧栏、脉冲图标）

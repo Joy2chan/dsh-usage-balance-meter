@@ -1190,6 +1190,28 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 }
 
 /** Register the plugin's tools, persistent ledger, and slash command. */
+/**
+ * Build the host-side usageMeter Typert remote service. The returned object
+ * carries a frozen typertRemote binding so the gateway can dispatch
+ * usageMeter/getState to it. Kept as a small exported factory so apply()
+ * and the regression tests share one construction path.
+ */
+export function bindUsageMeter(
+  ctx: Context,
+  ledger: Ledger,
+  resolved: () => ResolvedConfig,
+): { getState(): Promise<CostStateView>; typertRemote: unknown } {
+  const usageMeter = {
+    typertRemote: undefined as unknown,
+    async getState(): Promise<CostStateView> {
+      ;(ctx as unknown as { logger?: { info?: (msg: string) => void } }).logger?.info?.('[usage-balance-meter] getState called')
+      return buildCostState(ctx, ledger, resolved())
+    },
+  }
+  usageMeter.typertRemote = bindTypertRemote(usageMeter, 'usageMeter')
+  return usageMeter
+}
+
 export function apply(ctx: Context, config: Config): void {
   // Dynamic configuration: a mounted settings section can replace the source
   // function, so every operation re-resolves with the latest persisted values.
@@ -1225,14 +1247,7 @@ export function apply(ctx: Context, config: Config): void {
   // Host-side Typert remote consumed by the web client footer. The typert
   // gateway resolves ctx.usageMeter and demands a visible typertRemote binding
   // on the service object before dispatching usageMeter/getState.
-  const usageMeter = {
-    async getState(): Promise<CostStateView> {
-      ;(ctx as unknown as { logger?: { info?: (msg: string) => void } }).logger?.info?.('[usage-balance-meter] getState called')
-      return buildCostState(ctx, ledger, resolved())
-    },
-  }
-  Object.assign(usageMeter, { typertRemote: bindTypertRemote(usageMeter, 'usageMeter') })
-  ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', usageMeter)
+  ;(ctx as unknown as { provide?: (name: string, service: unknown) => void }).provide?.('usageMeter', bindUsageMeter(ctx, ledger, resolved))
 
   // Capture every model call's usage from the llm/stream waterfall and account
   // it into the persistent ledger (today / month / all totals).
