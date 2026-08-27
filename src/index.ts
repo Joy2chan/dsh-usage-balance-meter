@@ -348,10 +348,16 @@ function buildResolvedPriceTable(config: Config): ResolvedPriceTable {
     : undefined
 
   const rawDefault = config.prices?.default ?? userTopGlobal
-  // If the user set their own top-level global price, do not auto-apply the
-  // baked provider prices (they are a fallback, not an override).
-  const rawProviders = config.prices?.providers
-    ?? (userSetTopGlobal ? undefined : DEFAULT_PRICE_TABLE.providers)
+  // Schemastery normalizes an absent prices config to
+  // `{ default: { peak: {}, offPeak: {} }, providers: {} }`; treat an empty
+  // providers dict as unset so the baked provider prices still fall back (they
+  // are a fallback, not an override — a real prices.providers dict with rows
+  // is kept). A user-set top-level global price still disables the baked table.
+  const configuredProviders = config.prices?.providers
+  const hasConfiguredProviders = configuredProviders !== undefined && Object.keys(configuredProviders).length > 0
+  const rawProviders = hasConfiguredProviders
+    ? configuredProviders
+    : (userSetTopGlobal ? undefined : DEFAULT_PRICE_TABLE.providers)
 
   const providers = rawProviders === undefined
     ? undefined

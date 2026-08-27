@@ -61,4 +61,18 @@ describe('baked default prices', () => {
     const row = res.providers.find(p => p.provider === 'opencode-go')!
     expect(row.cost?.total ?? 0).toBeGreaterThan(0)
   })
+
+  it('prices through Config() normalization with no user prices (regression: schemastery injects an empty prices object)', async () => {
+    const validated = Config(undefined) as unknown as Parameters<typeof apply>[1]
+    const { ctx, tool } = fakeContext()
+    apply(ctx, validated)
+    process.env.DEEPSEEK_API_KEY = 'x'
+    const agent = { session: { events: [
+      { type: 'assistant/message', data: { message: { source: { provider: 'opencode-go', model: 'deepseek-v4-flash' } }, usage: { inputTokens: 1000000, outputTokens: 1000000, cacheReadTokens: 1000000 } } },
+    ] } }
+    const res = await tool('api_overview')!.execute({}, { agent, signal: new AbortController().signal }) as { providers: Array<{ provider: string; cost: { total: number } | null }> }
+    const row = res.providers.find(p => p.provider === 'opencode-go')!
+    expect(row.cost).not.toBeNull()
+    expect(row.cost!.total).toBeGreaterThan(0)
+  })
 })
