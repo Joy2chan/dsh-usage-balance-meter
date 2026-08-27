@@ -20,6 +20,31 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'remote']
     const name = 'usage-balance-meter-client'
+    let clientCtx = null
+    /** Rail click expands the sidebar through the host layout service. */
+    function expandSidebar() {
+      try { clientCtx?.get('layout')?.toggleSidebar?.() } catch { /* layout unavailable */ }
+    }
+
+    /** Inline SVG pulse icon (design-system stroke style, theme colored). */
+    function CostIcon({ size }) {
+      return React.createElement(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.5,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+          flexShrink: 0,
+        },
+        React.createElement('polyline', { points: '1.5 8 4 8 6 14 10 2 12 8 14.5 8' }),
+      )
+    }
 
     // Minimal Typert client contribution matching the host ./typert manifest.
     // Mounting it makes ctx.get('remote.usageMeter') available on the client.
@@ -77,6 +102,7 @@ window.__ModuleLoader__.load({
       const buttonRef = useRef(null)
       const panelRef = useRef(null)
       const [popup, setPopup] = useState({ left: 0, bottom: 0, width: POPUP_MAX_WIDTH })
+      const [hovered, setHovered] = useState(false)
 
       useEffect(() => subscribe(setSnap), [])
       useEffect(() => {
@@ -144,10 +170,10 @@ window.__ModuleLoader__.load({
       const todayCost = s && s.today && s.today.cost ? costParts(s.today.cost).join(' · ') : ''
       const budgetText = s && s.budget ? ` ${s.budget.percent.toFixed(0)}%` : ''
       let compactLabel = wide
-        ? (todayCost ? `⌁ ${shortCost(s.today.cost)}${budgetText}` : '⌁ cost')
-        : '⌁'
-      if (snap.status === 'error') compactLabel = wide ? '⌁ err' : '⌁!'
-      else if (snap.status === 'loading') compactLabel = wide ? '⌁ …' : '⌁'
+        ? (todayCost ? `${shortCost(s.today.cost)}${budgetText}` : 'cost')
+        : ''
+      if (snap.status === 'error') compactLabel = wide ? 'err' : ''
+      else if (snap.status === 'loading') compactLabel = wide ? '…' : ''
 
       const details = []
       if (snap.status === 'loading') details.push({ label: 'status', value: 'loading…' })
@@ -168,20 +194,35 @@ window.__ModuleLoader__.load({
 
       const styles = {
         root: { position: 'relative', display: 'flex', alignItems: 'center', width: '100%', minWidth: 0 },
-        button: {
+        button: wide ? {
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 4,
-          padding: '2px 6px',
+          gap: 3,
+          padding: '1px 3px',
           borderRadius: 6,
-          border: '1px solid rgba(127,127,127,.25)',
+          border: 'none',
           background: 'transparent',
           color: 'inherit',
           cursor: 'pointer',
           font: 'inherit',
-          width: wide ? '100%' : 'auto',
-          justifyContent: wide ? 'space-between' : 'center',
+          lineHeight: 'inherit',
+          width: 'auto',
+          justifyContent: 'center',
           minWidth: 0,
+        } : {
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 36,
+          height: 36,
+          padding: 0,
+          border: 'none',
+          borderRadius: '50%',
+          background: hovered ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+          color: 'var(--dsw-alias-label-primary)',
+          cursor: 'pointer',
+          lineHeight: 1,
+          fontSize: 18,
         },
         label: {
           minWidth: 0,
@@ -223,13 +264,20 @@ window.__ModuleLoader__.load({
           'button',
           {
             ref: buttonRef,
-            onClick: () => setOpen(o => !o),
+            onClick: () => { if (wide) setOpen(o => !o); else expandSidebar() },
+            onMouseEnter: () => setHovered(true),
+            onMouseLeave: () => setHovered(false),
             style: styles.button,
             title: todayCost ? `Today ${todayCost}` : 'dsh-usage-balance-meter',
             'aria-expanded': open,
           },
-          React.createElement('span', { style: styles.label }, compactLabel),
-          wide ? React.createElement('span', { style: styles.chevron, 'aria-hidden': 'true' }, open ? '▴' : '▾') : null,
+          wide
+            ? React.createElement(React.Fragment, null,
+                React.createElement('span', { style: { display: 'inline-flex', flexShrink: 0 } }, React.createElement(CostIcon, { size: 13 })),
+                React.createElement('span', { style: styles.label }, compactLabel),
+                React.createElement('span', { style: styles.chevron, 'aria-hidden': 'true' }, open ? '▴' : '▾'),
+              )
+            : React.createElement(CostIcon, { size: 18 }),
         ),
         open && wide
           ? React.createElement(
@@ -249,6 +297,7 @@ window.__ModuleLoader__.load({
     }
 
     async function apply(ctx) {
+      clientCtx = ctx
       const slots = ctx.get('slots')
       // Register the client Typert contribution so the remote is available.
       const remoteHost = ctx.remote
